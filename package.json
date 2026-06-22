@@ -6,10 +6,12 @@
   "private": true,
   "author": "Otaku Clash Angola Team",
   "license": "Proprietary",
+
   "engines": {
     "node": ">=22.0.0",
     "npm": ">=10.0.0"
   },
+
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
@@ -23,6 +25,7 @@
     "db:seed": "node src/database/seed.js",
     "cron": "node src/services/cron/CronService.js"
   },
+
   "keywords": [
     "node",
     "express",
@@ -37,6 +40,7 @@
     "ranking",
     "angola"
   ],
+
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",
     "axios": "^1.7.2",
@@ -62,6 +66,7 @@
     "winston": "^3.13.0",
     "zod": "^3.23.8"
   },
+
   "devDependencies": {
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
@@ -71,6 +76,7 @@
     "prettier": "^3.3.2",
     "supertest": "^7.0.0"
   },
+
   "jest": {
     "testEnvironment": "node",
     "coveragePathIgnorePatterns": [
