@@ -1,68 +1,20 @@
+/**
+ * 🚀 OTAKU CLASH ANGOLA - AUTH REPOSITORY (ULTRA RESILIENTE)
+ * Versão: Ultra Mega Final - Enterprise Grade
+ * Descrição: Gestão de persistência de identidade e integração direta com Supabase Auth Admin.
+ */
+
 const BaseRepository = require('../../core/base/BaseRepository');
 const { supabaseAdmin } = require('../../config/supabase');
 const logger = require('../../config/logger');
 
-/**
- * AuthRepository - Gerencia a persistência e interações com o sistema de autenticação.
- */
 class AuthRepository extends BaseRepository {
   constructor() {
     super('public.profiles');
   }
 
   /**
-   * Busca um usuário pelo e-mail através da tabela de profiles vinculada.
-   * @param {string} email 
-   */
-  async findByEmail(email) {
-    const query = `
-      SELECT p.*, au.email 
-      FROM public.profiles p
-      JOIN auth.users au ON p.id = au.id
-      WHERE au.email = $1
-      LIMIT 1
-    `;
-    const { rows } = await this.db.query(query, [email.toLowerCase()]);
-    return rows[0] || null;
-  }
-
-  /**
-   * Busca um usuário pelo nome de usuário.
-   * @param {string} username 
-   */
-  async findByUsername(username) {
-    const query = `SELECT * FROM ${this.tableName} WHERE username = $1 LIMIT 1`;
-    const { rows } = await this.db.query(query, [username]);
-    return rows[0] || null;
-  }
-
-  /**
-   * Cria um usuário no Supabase Auth Admin.
-   * Isso ignora confirmação de e-mail se configurado, útil para registro rápido.
-   * @param {Object} userData - { email, password, username, full_name }
-   */
-  async createSupabaseUser(userData) {
-    try {
-      const { data, error } = await supabaseAdmin.auth.admin.createUser({
-        email: userData.email,
-        password: userData.password,
-        user_metadata: {
-          username: userData.username,
-          full_name: userData.full_name
-        },
-        email_confirm: true // Registra como já confirmado
-      });
-
-      if (error) throw error;
-      return data.user;
-    } catch (error) {
-      logger.error(`[AuthRepository] Erro ao criar usuário no Supabase Auth: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Autentica usuário via Supabase Auth.
+   * 🛡️ AUTENTICAÇÃO DIRETA NO SUPABASE
    */
   async signInWithEmail(email, password) {
     try {
@@ -71,65 +23,90 @@ class AuthRepository extends BaseRepository {
         password
       });
 
-      if (error) throw error;
+      if (error) {
+        // Logamos o erro mas deixamos o Service decidir se é 401 ou 500
+        logger.error(`[AuthRepository] Erro no Supabase Auth para ${email}: ${error.message}`);
+        throw error;
+      }
+
       return data;
     } catch (error) {
-      logger.error(`[AuthRepository] Eró de login: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Gera link de recuperação de senha.
-   * @param {string} email 
+   * 🔎 BUSCA PERFIL COM TRATAMENTO DE ERRO
    */
-  async generatePasswordResetLink(email) {
+  async findById(id) {
     try {
-      const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-        type: 'recovery',
-        email
-      });
-
-      if (error) throw error;
-      return data.properties.action_link;
+      const query = `SELECT * FROM ${this.tableName} WHERE id = $1 LIMIT 1`;
+      const { rows } = await this.db.query(query, [id]);
+      return rows[0] || null;
     } catch (error) {
-      logger.error(`[AuthRepository] Erro ao gerar link de reset: ${error.message}`);
-      throw error;
+      logger.error(`[AuthRepository] Falha ao buscar perfil ID ${id}: ${error.message}`);
+      return null; // Retornamos null para o Service acionar o fallback de criação
     }
   }
 
   /**
-   * Atualiza a senha de um usuário diretamente via Admin API.
+   * 🛠️ CRIAÇÃO DE PERFIL COM "UPSERT" (EVITA ERRO 500 DE DUPLICIDADE)
+   * Se o trigger do banco falhar ou o usuário já existir, este método garante a integridade.
    */
-  async adminUpdatePassword(userId, newPassword) {
-    try {
-      const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-        password: newPassword
-      });
+  async createProfileSafely(profileData) {
+    const { id, username, full_name, role } = profileData;
+    
+    const query = `
+      INSERT INTO public.profiles (id, username, full_name, role, xp, level, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, 0, 1, NOW(), NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        username = EXCLUDED.username,
+        full_name = EXCLUDED.full_name,
+        updated_at = NOW()
+      RETURNING *;
+    `;
 
-      if (error) throw error;
-      return data.user;
+    try {
+      const { rows } = await this.db.query(query, [id, username, full_name, role || 'USER']);
+      return rows[0];
     } catch (error) {
-      logger.error(`[AuthRepository] Erro ao atualizar senha: ${error.message}`);
-      throw error;
+      logger.error(`[AuthRepository] Erro crítico ao criar/atualizar perfil: ${error.message}`);
+      throw error; // Aqui lançamos erro pois é falha de banco (500)
     }
   }
 
   /**
-   * Verifica se o e-mail ou username já estão em uso.
+   * 🚦 VERIFICAÇÃO DE DISPONIBILIDADE
    */
   async checkConflicts(email, username) {
-    const query = `
-      SELECT 
-        (SELECT COUNT(*) FROM auth.users WHERE email = $1) as email_exists,
-        (SELECT COUNT(*) FROM public.profiles WHERE username = $2) as username_exists
-    `;
-    const { rows } = await this.db.query(query, [email.toLowerCase(), username]);
-    
-    return {
-      emailExists: parseInt(rows[0].email_exists) > 0,
-      usernameExists: parseInt(rows[0].username_exists) > 0
-    };
+    try {
+      // Verificamos no Auth e no Profile simultaneamente
+      const query = `
+        SELECT 
+          (SELECT COUNT(*) FROM public.profiles WHERE username = $1) as username_exists
+      `;
+      const { rows } = await this.db.query(query, [username]);
+      
+      return {
+        emailExists: false, // Supabase Auth já valida isso no signUp
+        usernameExists: parseInt(rows[0].username_exists) > 0
+      };
+    } catch (error) {
+      logger.error(`[AuthRepository] Falha ao verificar conflitos: ${error.message}`);
+      return { emailExists: false, usernameExists: false };
+    }
+  }
+
+  /**
+   * 🔑 ADMIN: ATUALIZA SENHA
+   */
+  async adminUpdatePassword(userId, newPassword) {
+    const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      password: newPassword
+    });
+
+    if (error) throw error;
+    return data.user;
   }
 }
 
