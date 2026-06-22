@@ -3,96 +3,189 @@ const env = require('./env');
 const logger = require('./logger');
 
 /**
- * Configuração da instância Redis para Cache e Estado da Aplicação.
- * Utiliza ioredis para suporte a clusters, sentinelas e pipelines de alta performance.
+ * ==================================================
+ * MEMORY FALLBACK (quando Redis não existir)
+ * ==================================================
+ */
+const memoryCache = new Map();
+
+/**
+ * ==================================================
+ * CONFIGURAÇÃO REDIS SEGURA
+ * ==================================================
  */
 const redisConfig = {
   host: env.REDIS_HOST,
   port: env.REDIS_PORT,
   password: env.REDIS_PASSWORD || undefined,
   db: env.REDIS_DB || 0,
-  keyPrefix: 'otaku_clash:', // Namespace para evitar colisões em instâncias compartilhadas
+  keyPrefix: 'otaku_clash:',
+
   retryStrategy(times) {
     const delay = Math.min(times * 50, 2000);
-    if (times > 10) {
-      logger.error(`[Redis] Max retry attempts reached (${times}). Connection failed.`);
-      return null; // Interrompe as tentativas após 10 erros consecutivos
+
+    if (times > 5) {
+      logger.warn(
+        `[Redis] Muitas tentativas (${times}). Mantendo fallback em memória.`
+      );
+      return null;
     }
+
     return delay;
   },
-  maxRetriesPerRequest: 3,
+
+  maxRetriesPerRequest: 2,
 };
 
-// Inicialização da instância do Redis
-const cache = new Redis(redisConfig);
-
 /**
- * Listeners de Monitoramento do Redis
+ * ==================================================
+ * INICIALIZAÇÃO SEGURA DO REDIS
+ * ==================================================
  */
-cache.on('connect', () => {
-  logger.info('🚀 Redis client connected successfully');
-});
+let cache = null;
+let redisAvailable = false;
 
-cache.on('error', (err) => {
-  logger.error('❌ Redis Client Error', {
-    message: err.message,
-    stack: err.stack
+try {
+  cache = new Redis(redisConfig);
+
+  cache.on('connect', () => {
+    redisAvailable = true;
+    logger.info('🚀 Redis conectado (modo híbrido ativo)');
   });
-});
 
-cache.on('reconnecting', () => {
-  logger.warn('🔄 Redis client is attempting to reconnect...');
-});
+  cache.on('error', (err) => {
+    redisAvailable = false;
+    logger.warn(
+      `❌ Redis indisponível (fallback memória ativo): ${err.message}`
+    );
+  });
+
+  cache.on('reconnecting', () => {
+    logger.warn('🔄 Redis reconectando...');
+  });
+
+} catch (error) {
+  logger.warn(
+    `[Redis] Falha total na inicialização. Usando memória: ${error.message}`
+  );
+
+  cache = null;
+  redisAvailable = false;
+}
 
 /**
- * Wrapper de utilitários para facilitar o uso do cache em Repositories/Services
+ * ==================================================
+ * CACHE PROVIDER HÍBRIDO
+ * ==================================================
  */
 const cacheProvider = {
   client: cache,
 
   /**
-   * Define um valor no cache com tempo de expiração
-   * @param {string} key 
-   * @param {any} value 
-   * @param {number} ttlSeconds - Tempo de vida em segundos (padrão 1 hora)
+   * SET
    */
   async set(key, value, ttlSeconds = 3600) {
     const data = JSON.stringify(value);
-    return await cache.set(key, data, 'EX', ttlSeconds);
+
+    if (redisAvailable && cache) {
+      try {
+        return await cache.set(key, data, 'EX', ttlSeconds);
+      } catch (err) {
+        logger.warn('[Cache] fallback set -> memory');
+      }
+    }
+
+    // fallback memória
+    memoryCache.set(key, {
+      value: data,
+      expire: Date.now() + ttlSeconds * 1000,
+    });
+
+    return true;
   },
 
   /**
-   * Obtém um valor do cache e faz o parse automático do JSON
-   * @param {string} key 
+   * GET
    */
   async get(key) {
-    const data = await cache.get(key);
-    if (!data) return null;
+    if (redisAvailable && cache) {
+      try {
+        const data = await cache.get(key);
+        if (!data) return null;
+        return JSON.parse(data);
+      } catch (err) {
+        logger.warn('[Cache] fallback get -> memory');
+      }
+    }
+
+    // fallback memória
+    const entry = memoryCache.get(key);
+    if (!entry) return null;
+
+    if (Date.now() > entry.expire) {
+      memoryCache.delete(key);
+      return null;
+    }
+
     try {
-      return JSON.parse(data);
-    } catch (err) {
-      return data;
+      return JSON.parse(entry.value);
+    } catch {
+      return entry.value;
     }
   },
 
   /**
-   * Remove uma chave específica
+   * DELETE
    */
   async del(key) {
-    return await cache.del(key);
+    if (redisAvailable && cache) {
+      try {
+        return await cache.del(key);
+      } catch {
+        logger.warn('[Cache] fallback del -> memory');
+      }
+    }
+
+    return memoryCache.delete(key);
   },
 
   /**
-   * Limpa chaves baseadas em um padrão (Pattern)
+   * DELETE BY PATTERN
    */
   async delByPattern(pattern) {
-    const keys = await cache.keys(`otaku_clash:${pattern}`);
-    if (keys.length > 0) {
-      // Remove o prefixo interno do ioredis para evitar duplicação no comando del
-      const rawKeys = keys.map(key => key.replace('otaku_clash:', ''));
-      return await cache.del(rawKeys);
+    const fullPattern = `otaku_clash:${pattern}`;
+
+    if (redisAvailable && cache) {
+      try {
+        const keys = await cache.keys(fullPattern);
+
+        if (keys.length > 0) {
+          const rawKeys = keys.map(k =>
+            k.replace('otaku_clash:', '')
+          );
+
+          return await cache.del(rawKeys);
+        }
+      } catch {
+        logger.warn('[Cache] fallback pattern -> memory');
+      }
     }
-    return 0;
+
+    // fallback memória
+    for (const key of memoryCache.keys()) {
+      if (key.includes(pattern.replace('*', ''))) {
+        memoryCache.delete(key);
+      }
+    }
+
+    return true;
+  },
+
+  /**
+   * STATUS DO CACHE
+   */
+  isRedisAvailable() {
+    return redisAvailable;
   }
 };
 
