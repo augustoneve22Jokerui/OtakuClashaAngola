@@ -1,97 +1,168 @@
 const { Pool } = require('pg');
 const env = require('./env');
-const logger = require('./logger'); // Nota: Será gerado em breve, mas o import é obrigatório
+const logger = require('./logger');
 
 /**
- * Configuração do Pool de Conexões PostgreSQL
- * Otimizado para integração com Supabase e ambientes de produção
+ * ==================================================
+ * ESTADO GLOBAL DO DB
+ * ==================================================
+ */
+let pool = null;
+let dbAvailable = false;
+
+/**
+ * ==================================================
+ * CONFIGURAÇÃO SEGURA
+ * ==================================================
  */
 const poolConfig = {
   connectionString: env.DATABASE_URL,
+
   host: env.DB_HOST,
   port: env.DB_PORT,
   database: env.DB_NAME,
   user: env.DB_USER,
   password: env.DB_PASSWORD,
-  // Máximo de clientes no pool
+
   max: 20,
-  // Tempo máximo que um cliente pode ficar ocioso antes de ser fechado
   idleTimeoutMillis: 30000,
-  // Tempo máximo para tentar uma conexão antes de retornar erro
-  connectionTimeoutMillis: 2000,
-  // SSL é obrigatório para conexões seguras com Supabase/Cloud
-  ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 5000,
+
+  ssl:
+    env.NODE_ENV === 'production'
+      ? { rejectUnauthorized: false }
+      : false,
 };
 
-const pool = new Pool(poolConfig);
-
 /**
- * Listener de Erros do Pool
- * Essencial para evitar que erros de rede ou perda de conexão derrubem o processo Node.js
+ * ==================================================
+ * INICIALIZAÇÃO HÍBRIDA (SAFE BOOT)
+ * ==================================================
  */
-pool.on('error', (err) => {
-  console.error('❌ Unexpected error on idle database client', err);
-  // Log estruturado será implementado no config/logger
-  if (logger && logger.error) {
-    logger.error('Database Pool Error', { error: err.message, stack: err.stack });
+function initDatabase() {
+  try {
+    if (!env.DATABASE_URL && !env.DB_HOST) {
+      logger.warn(
+        '[DB] Nenhuma configuração encontrada. Rodando em modo OFFLINE.'
+      );
+      dbAvailable = false;
+      return;
+    }
+
+    pool = new Pool(poolConfig);
+
+    pool.on('connect', () => {
+      dbAvailable = true;
+      logger.info('🚀 PostgreSQL conectado (modo híbrido ativo)');
+    });
+
+    pool.on('error', (err) => {
+      dbAvailable = false;
+
+      logger.warn(
+        `❌ DB indisponível (fallback ativo): ${err.message}`
+      );
+    });
+
+    pool.on('remove', () => {
+      logger.warn('[DB] Cliente removido do pool');
+    });
+
+  } catch (error) {
+    dbAvailable = false;
+    pool = null;
+
+    logger.warn(
+      `[DB] Falha total na inicialização. Modo offline ativo: ${error.message}`
+    );
   }
-});
+}
 
 /**
- * Helper para execução de queries com log de performance opcional
+ * Inicializa imediatamente ao importar
+ */
+initDatabase();
+
+/**
+ * ==================================================
+ * DB PROVIDER HÍBRIDO
+ * ==================================================
  */
 const db = {
   /**
-   * Executa uma query SQL simples
-   * @param {string} text - SQL Query
-   * @param {Array} params - Parâmetros da query
+   * STATUS DO DB
    */
-  async query(text, params) {
+  isAvailable() {
+    return dbAvailable && pool;
+  },
+
+  /**
+   * QUERY SEGURA
+   */
+  async query(text, params = []) {
+    if (!this.isAvailable()) {
+      logger.warn('[DB] Query ignorada (modo offline)');
+      return null;
+    }
+
     const start = Date.now();
+
     try {
       const res = await pool.query(text, params);
+
       const duration = Date.now() - start;
-      
-      // Log de queries lentas em desenvolvimento
+
       if (env.NODE_ENV === 'development' && duration > 100) {
-        console.warn(`🐢 Slow query: ${text} [${duration}ms]`);
+        logger.warn(`🐢 Slow query: ${duration}ms -> ${text}`);
       }
-      
+
       return res;
     } catch (error) {
-      throw error;
+      logger.error('[DB] Query falhou:', error.message);
+      return null;
     }
   },
 
   /**
-   * Adquire um cliente do pool para transações manuais
+   * CLIENTE PARA TRANSAÇÕES
    */
   async getClient() {
-    const client = await pool.connect();
-    const query = client.query;
-    const release = client.release;
+    if (!this.isAvailable()) {
+      throw new Error('[DB] Cliente indisponível (offline mode)');
+    }
 
-    // Monkey patch para rastrear o tempo de checkout do cliente
+    const client = await pool.connect();
+
+    const originalRelease = client.release;
+
     const timeout = setTimeout(() => {
-      console.error('⚠️ A client has been checked out for more than 5 seconds!');
-      console.error('Potential memory leak or unreleased transaction.');
+      logger.warn(
+        '⚠️ Cliente DB preso > 5s (possível leak de transação)'
+      );
     }, 5000);
 
     client.release = (err) => {
       clearTimeout(timeout);
-      client.query = query;
-      client.release = release;
-      return release.apply(client, [err]);
+      client.release = originalRelease;
+      return originalRelease.apply(client, [err]);
     };
 
     return client;
   },
 
   /**
-   * Finaliza o pool (usado em scripts de migração ou encerramento do servidor)
+   * FINALIZAÇÃO SEGURA
    */
   async end() {
-    return await pool.end();
+    if (!pool) return;
+
+    try {
+      await pool.end();
+      dbAvailable = false;
+      logger.info('[DB] Pool encerrado com sucesso');
+    } catch (error) {
+      logger.warn('[DB] Erro ao encerrar pool:', error.message);
+    }
   }
 };
 
