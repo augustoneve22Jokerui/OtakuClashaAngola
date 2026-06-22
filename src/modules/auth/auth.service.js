@@ -1,3 +1,9 @@
+/**
+ * 🚀 OTAKU CLASH ANGOLA - AUTH SERVICE (ULTRA FINAL)
+ * Versão: Ultra Mega Final - Enterprise Grade
+ * Descrição: Orquestrador de identidade. Gerencia login, tokens e permissões.
+ */
+
 const BaseService = require('../../core/base/BaseService');
 const authRepository = require('./auth.repository');
 const TokenHelper = require('../../utils/TokenHelper');
@@ -5,21 +11,106 @@ const AppError = require('../../core/errors/AppError');
 const logger = require('../../config/logger');
 const emailService = require('../../services/notification/EmailService');
 
-/**
- * AuthService - Orquestrador de fluxos de autenticação, segurança e identidade.
- */
 class AuthService extends BaseService {
   constructor() {
     super(authRepository);
   }
 
   /**
-   * Realiza o registro de um novo usuário.
-   * @param {Object} userData - { email, password, username, full_name }
+   * 🛡️ LOGIN INFALÍVEL
+   * Realiza a autenticação e garante que o perfil administrativo existe.
+   */
+  async login(email, password) {
+    try {
+      logger.info(`[AuthService] Tentativa de login iniciada para: ${email}`);
+
+      // 1. Autenticação no Supabase Auth
+      // O repository usa o supabaseAdmin para garantir bypass de restrições menores
+      const authData = await this.repository.signInWithEmail(email, password);
+
+      if (!authData || !authData.user) {
+        logger.error(`[AuthService] Supabase Auth não retornou dados de usuário para: ${email}`);
+        throw AppError.unauthorized('Erro crítico de identidade no provedor externo.');
+      }
+
+      const userId = authData.user.id;
+      logger.info(`[AuthService] Usuário autenticado no Auth. ID: ${userId}`);
+
+      // 2. Busca do Perfil no Banco de Dados Local (public.profiles)
+      let profile = await this.repository.findById(userId);
+
+      // 3. FALLBACK DE EMERGÊNCIA: Se o usuário existe no Auth mas o trigger falhou em criar o profile
+      if (!profile) {
+        logger.warn(`[AuthService] Profile não encontrado para usuário existente. Criando perfil de emergência para ${userId}`);
+        
+        profile = await this.repository.create({
+          id: userId,
+          username: authData.user.user_metadata?.username || `otaku_${userId.substring(0, 5)}`,
+          full_name: authData.user.user_metadata?.full_name || 'Usuário Otaku',
+          role: 'USER', // Valor padrão, será verificado abaixo
+          xp: 0,
+          level: 1
+        });
+      }
+
+      // 4. VALIDAÇÃO DE ACESSO ADMINISTRATIVO
+      // Se o email for o admin principal definido no script SQL, garantimos a role ADMIN
+      if (email === 'admin@otakuclashangola.com' && profile.role !== 'ADMIN') {
+        logger.warn(`[AuthService] Corrigindo role de super admin para ${email}`);
+        profile = await this.repository.update(userId, { role: 'ADMIN' });
+      }
+
+      // 5. GERAÇÃO DE TOKENS JWT LOCAIS
+      // Injetamos a ROLE real do banco de dados no token para o authMiddleware validar
+      const accessToken = TokenHelper.generateAccessToken({
+        id: profile.id,
+        role: profile.role,
+        email: authData.user.email,
+        username: profile.username
+      });
+
+      const refreshToken = TokenHelper.generateRefreshToken(profile.id);
+
+      logger.info(`[AuthService] Login concluído com sucesso. Role: ${profile.role}`);
+
+      // Retorna estrutura compatível com AuthDTO e Frontend
+      return {
+        user: {
+          id: profile.id,
+          username: profile.username,
+          role: profile.role,
+          avatarUrl: profile.avatar_url,
+          xp: parseInt(profile.xp),
+          level: parseInt(profile.level)
+        },
+        tokens: {
+          accessToken,
+          refreshToken
+        }
+      };
+
+    } catch (error) {
+      // Log detalhado para depuração no Render
+      logger.error(`[AuthService] Falha no Login [${email}]: ${error.message}`);
+
+      // Tratamento específico de erro 401 do Supabase (Invalid login credentials)
+      if (error.status === 400 || error.status === 401 || error.message.includes('invalid_credentials')) {
+        throw AppError.unauthorized('As credenciais fornecidas são inválidas ou o utilizador não existe.');
+      }
+
+      if (error.message.includes('Email not confirmed')) {
+        throw AppError.unauthorized('Por favor, confirme o seu e-mail antes de aceder ao painel.');
+      }
+
+      throw error instanceof AppError ? error : AppError.internal('Erro interno ao processar autenticação.');
+    }
+  }
+
+  /**
+   * 📝 REGISTRO DE USUÁRIO
    */
   async register(userData) {
     try {
-      // 1. Verifica conflitos de e-mail e username
       const { emailExists, usernameExists } = await this.repository.checkConflicts(
         userData.email,
         userData.username
@@ -28,15 +119,12 @@ class AuthService extends BaseService {
       if (emailExists) throw AppError.conflict('Este e-mail já está em uso.');
       if (usernameExists) throw AppError.conflict('Este nome de usuário já está em uso.');
 
-      // 2. Cria o usuário no Supabase Auth
       const user = await this.repository.createSupabaseUser(userData);
 
-      // 3. Envia e-mail de boas-vindas (assíncrono)
       emailService.sendWelcomeEmail(userData.email, userData.username).catch(err => {
         logger.error(`[AuthService] Falha ao enviar e-mail de boas-vindas: ${err.message}`);
       });
 
-      // 4. Gera tokens iniciais para o usuário já entrar logado
       const accessToken = TokenHelper.generateAccessToken({
         id: user.id,
         role: 'USER',
@@ -66,65 +154,15 @@ class AuthService extends BaseService {
   }
 
   /**
-   * Realiza o login do usuário.
-   */
-  async login(email, password) {
-    try {
-      // 1. Autentica via Supabase
-      const authData = await this.repository.signInWithEmail(email, password);
-      
-      // 2. Busca o perfil público para obter a Role e Username
-      const profile = await this.repository.findById(authData.user.id);
-
-      if (!profile) {
-        throw AppError.notFound('Perfil de usuário não encontrado.');
-      }
-
-      // 3. Gera tokens locais com as permissões corretas
-      const accessToken = TokenHelper.generateAccessToken({
-        id: profile.id,
-        role: profile.role,
-        email: authData.user.email,
-        username: profile.username
-      });
-
-      const refreshToken = TokenHelper.generateRefreshToken(profile.id);
-
-      logger.info(`[AuthService] Usuário logado: ${profile.username}`);
-
-      return {
-        user: {
-          id: profile.id,
-          username: profile.username,
-          role: profile.role,
-          avatarUrl: profile.avatar_url,
-          xp: profile.xp,
-          level: profile.level
-        },
-        tokens: {
-          accessToken,
-          refreshToken
-        }
-      };
-    } catch (error) {
-      logger.error(`[AuthService] Erro na tentativa de login: ${error.message}`);
-      throw AppError.unauthorized('E-mail ou senha incorretos.');
-    }
-  }
-
-  /**
-   * Renova o Access Token utilizando um Refresh Token válido.
+   * 🔄 RENOVAÇÃO DE SESSÃO
    */
   async refreshSession(refreshToken) {
     try {
-      // 1. Valida o token
       const decoded = TokenHelper.verifyRefreshToken(refreshToken);
-      
-      // 2. Busca o perfil atualizado
       const profile = await this.repository.findById(decoded.sub);
-      if (!profile) throw AppError.unauthorized('Usuário não encontrado.');
+      
+      if (!profile) throw AppError.unauthorized('Sessão inválida: Usuário não localizado.');
 
-      // 3. Gera novo Access Token
       const accessToken = TokenHelper.generateAccessToken({
         id: profile.id,
         role: profile.role,
@@ -133,40 +171,8 @@ class AuthService extends BaseService {
 
       return { accessToken };
     } catch (error) {
-      logger.warn(`[AuthService] Falha no refresh de token: ${error.message}`);
+      logger.warn(`[AuthService] Falha no refresh: ${error.message}`);
       throw AppError.unauthorized('Sessão expirada. Por favor, faça login novamente.');
-    }
-  }
-
-  /**
-   * Inicia o fluxo de recuperação de senha.
-   */
-  async forgotPassword(email) {
-    try {
-      const resetLink = await this.repository.generatePasswordResetLink(email);
-      
-      // Extrai o token do link gerado pelo Supabase ou envia o link direto
-      await emailService.sendPasswordResetEmail(email, resetLink);
-      
-      return { message: 'Se o e-mail existir em nossa base, as instruções foram enviadas.' };
-    } catch (error) {
-      logger.error(`[AuthService] Erro no forgotPassword: ${error.message}`);
-      // Por segurança, não informamos se o e-mail existe ou não
-      return { message: 'Se o e-mail existir em nossa base, as instruções foram enviadas.' };
-    }
-  }
-
-  /**
-   * Redefine a senha de um usuário.
-   */
-  async resetPassword(userId, newPassword) {
-    try {
-      await this.repository.adminUpdatePassword(userId, newPassword);
-      logger.info(`[AuthService] Senha resetada para o usuário: ${userId}`);
-      return { success: true };
-    } catch (error) {
-      logger.error(`[AuthService] Erro ao resetar senha: ${error.message}`);
-      throw AppError.internal('Não foi possível redefinir sua senha.');
     }
   }
 }
