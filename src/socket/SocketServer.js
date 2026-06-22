@@ -1,58 +1,111 @@
 const { Server } = require('socket.io');
-const { createAdapter } = require('@socket.io/redis-adapter');
+
+let createAdapter = null;
+
+/**
+ * ==================================================
+ * IMPORTAÇÃO SEGURA DO REDIS ADAPTER
+ * ==================================================
+ * Evita crash se o pacote não estiver instalado
+ */
+try {
+  ({ createAdapter } = require('@socket.io/redis-adapter'));
+} catch (error) {
+  console.warn(
+    '[Socket.IO] Redis Adapter não encontrado. Modo standalone ativado.'
+  );
+}
+
 const { serverOptions, socketConfig } = require('../config/socket');
 const cacheProvider = require('../config/cache');
 const TokenHelper = require('../utils/TokenHelper');
 const logger = require('../config/logger');
 
-// Importação dos controladores de eventos (serão gerados a seguir)
+// Controllers
 const LobbyController = require('./controllers/LobbyController');
 const MatchmakingController = require('./controllers/MatchmakingController');
 const PresenceController = require('./controllers/PresenceController');
 
-/**
- * SocketServer - Gerenciador central de WebSockets.
- * Responsável pela inicialização, autenticação e roteamento de eventos.
- */
 class SocketServer {
   constructor() {
     this.io = null;
   }
 
-  /**
-   * Inicializa o servidor Socket.IO anexado ao servidor HTTP.
-   * @param {Object} httpServer - Instância do servidor HTTP do Node.js.
-   */
   init(httpServer) {
     this.io = new Server(httpServer, serverOptions);
 
-    // Configura o Adaptador Redis para escalabilidade horizontal
-    const pubClient = cacheProvider.client;
-    const subClient = pubClient.duplicate();
-    this.io.adapter(createAdapter(pubClient, subClient));
+    /**
+     * ==================================================
+     * REDIS ADAPTER HÍBRIDO
+     * ==================================================
+     * - Usa Redis se possível
+     * - Senão continua em modo standalone
+     * - Nunca quebra o servidor
+     */
+    try {
+      const redisEnabled = process.env.REDIS_ENABLED === 'true';
 
-    // Middleware de Autenticação Global
+      const hasRedisClient =
+        cacheProvider &&
+        cacheProvider.client &&
+        typeof cacheProvider.client.duplicate === 'function';
+
+      const hasAdapter = typeof createAdapter === 'function';
+
+      if (redisEnabled && hasRedisClient && hasAdapter) {
+        const pubClient = cacheProvider.client;
+        const subClient = pubClient.duplicate();
+
+        this.io.adapter(createAdapter(pubClient, subClient));
+
+        logger.info(
+          '[Socket.IO] Redis Adapter ativado com sucesso.'
+        );
+      } else {
+        logger.warn(
+          '[Socket.IO] Modo standalone (sem Redis Adapter).'
+        );
+      }
+    } catch (error) {
+      logger.warn(
+        `[Socket.IO] Falha ao ativar Redis Adapter. Fallback aplicado: ${error.message}`
+      );
+    }
+
+    /**
+     * ==================================================
+     * MIDDLEWARE GLOBAL DE AUTENTICAÇÃO
+     * ==================================================
+     */
     this.io.use(async (socket, next) => {
       try {
-        const token = socket.handshake.auth.token || socket.handshake.headers['authorization']?.split(' ')[1];
+        const token =
+          socket.handshake.auth.token ||
+          socket.handshake.headers['authorization']?.split(' ')[1];
 
         if (!token) {
-          return next(new Error('Autenticação necessária para conexão socket.'));
+          return next(
+            new Error('Autenticação necessária para conexão socket.')
+          );
         }
 
         const decoded = TokenHelper.verifyAccessToken(token);
-        
-        // Injeta os dados do usuário no socket para uso nos controllers
+
         socket.user = {
           id: decoded.sub || decoded.id,
           role: decoded.role,
           username: decoded.username
         };
 
-        logger.info(`[SocketServer] Usuário autenticado: ${socket.user.username} (${socket.id})`);
+        logger.info(
+          `[SocketServer] Usuário autenticado: ${socket.user.username} (${socket.id})`
+        );
+
         next();
       } catch (err) {
-        logger.warn(`[SocketServer] Falha na conexão socket: ${err.message}`);
+        logger.warn(
+          `[SocketServer] Falha na conexão socket: ${err.message}`
+        );
         next(new Error('Token inválido ou expirado.'));
       }
     });
@@ -60,43 +113,44 @@ class SocketServer {
     this.setupNamespaces();
     this.setupGlobalEvents();
 
-    logger.info('🚀 Servidor Socket.IO inicializado com sucesso.');
+    logger.info('🚀 Socket.IO inicializado (modo híbrido ativo).');
+
     return this.io;
   }
 
   /**
-   * Configura namespaces específicos para separar responsabilidades.
+   * Namespaces
    */
   setupNamespaces() {
     const gameNamespace = this.io.of(socketConfig.namespaces.GAME);
     const chatNamespace = this.io.of(socketConfig.namespaces.CHAT);
 
-    // Instancia controladores para cada namespace
     new LobbyController(gameNamespace);
     new MatchmakingController(gameNamespace);
-    new PresenceController(this.io); // Presence costuma ser global ou compartilhado
+    new PresenceController(this.io);
   }
 
   /**
-   * Configura eventos globais de conexão e desconexão.
+   * Eventos globais
    */
   setupGlobalEvents() {
     this.io.on('connection', (socket) => {
-      // Entra em uma sala privada do próprio usuário para notificações diretas
       socket.join(`user:${socket.user.id}`);
 
       socket.on('error', (error) => {
-        logger.error(`[Socket] Erro no socket ${socket.id}:`, error);
+        logger.error(`[Socket] Erro ${socket.id}:`, error);
       });
 
       socket.on('disconnect', (reason) => {
-        logger.info(`[Socket] Usuário desconectado: ${socket.user.username} (${reason})`);
+        logger.info(
+          `[Socket] Desconectado: ${socket.user.username} (${reason})`
+        );
       });
     });
   }
 
   /**
-   * Helper para emitir eventos para um usuário específico em qualquer lugar do cluster.
+   * Emit individual user
    */
   emitToUser(userId, event, data) {
     if (this.io) {
@@ -105,7 +159,7 @@ class SocketServer {
   }
 
   /**
-   * Helper para emitir eventos para uma sala específica.
+   * Emit room or namespace
    */
   emitToRoom(room, event, data, namespace = '/') {
     if (this.io) {
@@ -114,5 +168,4 @@ class SocketServer {
   }
 }
 
-// Exporta como Singleton para ser acessado por Services e Controllers HTTP
 module.exports = new SocketServer();
