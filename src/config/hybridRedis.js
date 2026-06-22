@@ -1,15 +1,22 @@
-/**
- * ==========================================
- * Hybrid Redis Provider
- * Redis Opcional com Fallback Transparente
- * ==========================================
- */
-
 const logger = require('./logger');
 
+/**
+ * ==================================================
+ * NULL REDIS CLIENT (FALLBACK TOTAL)
+ * ==================================================
+ */
 class NullRedisClient {
   constructor() {
     this.connected = false;
+    this.status = 'offline';
+    this.isOpen = false;
+    this.isReady = false;
+  }
+
+  on() {}
+  off() {}
+  duplicate() {
+    return new NullRedisClient();
   }
 
   async ping() {
@@ -57,29 +64,43 @@ class NullRedisClient {
   }
 }
 
+/**
+ * ==================================================
+ * PROVIDER HÍBRIDO
+ * ==================================================
+ */
 let provider;
 
 try {
-  const cacheProvider = require('./cache');
+  let cacheProvider = null;
+
+  try {
+    cacheProvider = require('./cache');
+  } catch (err) {
+    logger.warn('[HybridRedis] cache module indisponível');
+  }
+
+  const client =
+    cacheProvider?.client || new NullRedisClient();
 
   provider = {
-    enabled: true,
-    client: cacheProvider.client
+    enabled: !!cacheProvider?.client,
+    client,
   };
 
   logger.info(
-    '[HybridRedis] Redis Provider carregado com sucesso.'
+    '[HybridRedis] Provider inicializado (modo híbrido seguro)'
   );
 
 } catch (error) {
 
   logger.warn(
-    `[HybridRedis] Redis indisponível. Executando em modo standalone. Motivo: ${error.message}`
+    `[HybridRedis] fallback TOTAL ativado: ${error.message}`
   );
 
   provider = {
     enabled: false,
-    client: new NullRedisClient()
+    client: new NullRedisClient(),
   };
 }
 
