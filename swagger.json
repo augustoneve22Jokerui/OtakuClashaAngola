@@ -1,0 +1,162 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Otaku Clash Angola API",
+    "description": "API Enterprise para plataforma de Quiz, Battle Royale e Torneios de Anime.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Suporte Técnico Otaku Clash",
+      "email": "tech@otakuclashangola.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000/api/v1",
+      "description": "Servidor de Desenvolvimento"
+    },
+    {
+      "url": "https://otakuclashangola.onrender.com/api/v1",
+      "description": "Servidor de Produção"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "error" },
+          "message": { "type": "string" },
+          "stack": { "type": "string" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "username": { "type": "string" },
+          "email": { "type": "string" },
+          "role": { "type": "string", "enum": ["USER", "MODERATOR", "ADMIN"] },
+          "xp": { "type": "integer" },
+          "level": { "type": "integer" }
+        }
+      },
+      "Wallet": {
+        "type": "object",
+        "properties": {
+          "balance_available": { "type": "number" },
+          "balance_locked": { "type": "number" },
+          "currency": { "type": "string", "example": "AKZ" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Registrar novo usuário",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password", "username"],
+                "properties": {
+                  "email": { "type": "string" },
+                  "password": { "type": "string", "minLength": 8 },
+                  "username": { "type": "string" },
+                  "full_name": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Usuário criado com sucesso" },
+          "400": { "description": "Dados inválidos" },
+          "409": { "description": "Usuário já existe" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Autenticar usuário",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Login realizado" },
+          "401": { "description": "Credenciais inválidas" }
+        }
+      }
+    },
+    "/profiles/me": {
+      "get": {
+        "tags": ["Profiles"],
+        "summary": "Obter perfil do usuário logado",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Dados do perfil",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/wallets/balance": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Consultar saldo da carteira",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Saldo atual",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Wallet" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rankings/global": {
+      "get": {
+        "tags": ["Rankings"],
+        "summary": "Listar ranking global de XP",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } }
+        ],
+        "responses": {
+          "200": { "description": "Lista de jogadores ordenada por XP" }
+        }
+      }
+    }
+  }
+}
