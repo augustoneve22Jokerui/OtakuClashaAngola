@@ -10,7 +10,7 @@ const app = require('./app');
 const env = require('./config/env');
 const logger = require('./config/logger');
 const db = require('./config/database');
-const cacheProvider = require('./config/cache');
+const cacheProvider = require('./config/hybridRedis');
 const socketServer = require('./socket/SocketServer');
 const cronService = require('./services/cron/CronService');
 
