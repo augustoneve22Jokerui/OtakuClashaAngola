@@ -1,7 +1,8 @@
 /**
- * ⏰ OTAKU CLASH ANGOLA - CRON SERVICE (BACKGROUND ORCHESTRATOR)
- * Versão: 2.0.0 - Enterprise Grade
- * Descrição: Gerencia tarefas agendadas para manutenção, sincronização e integridade.
+ * ==========================================
+ * OTAKU CLASH ANGOLA - CRON SERVICE
+ * Enterprise Hybrid Safe Edition
+ * ==========================================
  */
 
 const cron = require('node-cron');
@@ -9,123 +10,373 @@ const logger = require('../../config/logger');
 const db = require('../../config/database');
 const cacheProvider = require('../../config/hybridRedis');
 
-// Services de Integração
 const AnimeSyncService = require('../jikan/AnimeSyncService');
 const CharacterSyncService = require('../jikan/CharacterSyncService');
 const QuestionGeneratorService = require('../jikan/QuestionGeneratorService');
 
 class CronService {
-  constructor() {
-    this.animeSync = new AnimeSyncService();
-    this.charSync = new CharacterSyncService();
-    this.questionGen = new QuestionGeneratorService();
-  }
 
-  /**
-   * 🚀 INICIALIZA TODOS OS AGENDAMENTOS
-   */
-  start() {
-    logger.info('⚡ Servidor de Tarefas Cron activado.');
+    constructor() {
+        this.started = false;
 
-    /**
-     * 1. 🎬 SINCRONIZAÇÃO DIÁRIA DE ANIMES (TEMPORADA)
-     * Horário: Todos os dias às 03:00 AM (Luanda)
-     */
-    cron.schedule('0 3 * * *', async () => {
-      this._runJob('DailyAnimeSync', async () => {
-        logger.info('[Cron:Anime] Iniciando sincronização da temporada...');
-        await this.animeSync.syncSeasonAnimes();
-      });
-    });
-
-    /**
-     * 2. 👥 MANUTENÇÃO SEMANAL DE CONTEÚDO (CHARS & QUESTÕES)
-     * Horário: Todos os domingos às 04:00 AM (Luanda)
-     */
-    cron.schedule('0 4 * * 0', async () => {
-      this._runJob('WeeklyContentMaintenance', async () => {
-        logger.info('[Cron:Maintenance] Iniciando manutenção semanal...');
-        
-        // A. Sincroniza personagens de animes novos/pendentes
-        await this.charSync.syncPendingAnimes();
-
-        // B. Gera questões automáticas para as obras recém-sincronizadas
-        const { rows: recentAnimes } = await db.query(
-          'SELECT id FROM public.animes ORDER BY created_at DESC LIMIT 5'
-        );
-
-        for (const anime of recentAnimes) {
-          await this.questionGen.generateForAnime(anime.id);
+        try {
+            this.animeSync = new AnimeSyncService();
+        } catch {
+            this.animeSync = null;
         }
-      });
-    });
 
-    /**
-     * 3. 🧹 LIMPEZA DE CACHE E ESTADOS ÓRFÃOS
-     * Horário: A cada 6 horas
-     */
-    cron.schedule('0 */6 * * *', async () => {
-      this._runJob('InfrastructureCleanup', async () => {
-        logger.info('[Cron:Cleanup] Iniciando faxina de infraestrutura...');
-        
-        // Limpa filas de matchmaking expiradas e sessões de quiz abandonadas no cache
-        const keys = await cacheProvider.client.keys('otaku_clash:*');
-        // O cacheProvider/Redis tratará o TTL, mas aqui podemos forçar limpezas lógicas se necessário.
-        
-        logger.info(`[Cron:Cleanup] Manutenção de memória concluída.`);
-      });
-    });
-
-    /**
-     * 4. 🛰️ RECONCILIAÇÃO DE PRESENÇA (ANTI-GHOSTING)
-     * Horário: A cada 5 minutos
-     * Objetivo: Limpar utilizadores que constam como online mas não têm socket ativo.
-     */
-    cron.schedule('*/5 * * * *', async () => {
-      this._runJob('PresenceReconciliation', async () => {
-        const presenceKey = 'presence:online_users';
-        const onlineUsers = await cacheProvider.client.smembers(presenceKey);
-
-        if (onlineUsers.length > 0) {
-          logger.debug(`[Cron:Presence] Verificando integridade de ${onlineUsers.length} utilizadores.`);
-          
-          // Nota: Em um ambiente clusterizado, a reconciliação deve ser cuidadosa.
-          // Aqui implementamos uma lógica de 'heartbeat' via last_seen no banco.
-          const query = `
-            UPDATE public.profiles 
-            SET is_online = false 
-            WHERE is_online = true 
-            AND last_seen < NOW() - INTERVAL '10 minutes'
-            RETURNING id
-          `;
-          
-          const { rows: loggedOut } = await db.query(query);
-          
-          if (loggedOut.length > 0) {
-            for (const user of loggedOut) {
-              await cacheProvider.client.srem(presenceKey, user.id);
-            }
-            logger.info(`[Cron:Presence] ${loggedOut.length} utilizadores inactivos movidos para offline.`);
-          }
+        try {
+            this.charSync = new CharacterSyncService();
+        } catch {
+            this.charSync = null;
         }
-      });
-    });
-  }
 
-  /**
-   * 🛡️ WRAPPER PARA EXECUÇÃO SEGURA DE JOBS (PRIVATE)
-   */
-  async _runJob(jobName, fn) {
-    const startTime = Date.now();
-    try {
-      await fn();
-      const duration = Date.now() - startTime;
-      logger.debug(`[Cron:Success] Job "${jobName}" concluído em ${duration}ms.`);
-    } catch (error) {
-      logger.error(`[Cron:Error] Falha crítica no Job "${jobName}": ${error.message}`);
-      // Aqui poderíamos integrar com Sentry ou outro monitor de erros
+        try {
+            this.questionGen = new QuestionGeneratorService();
+        } catch {
+            this.questionGen = null;
+        }
     }
-  }
+
+    /**
+     * ==========================================
+     * START
+     * ==========================================
+     */
+    start() {
+
+        if (this.started) {
+            return;
+        }
+
+        this.started = true;
+
+        logger.info('⏰ Cron Service inicializado.');
+
+        /**
+         * ==========================================
+         * DAILY ANIME SYNC
+         * ==========================================
+         */
+        cron.schedule('0 3 * * *', async () => {
+
+            await this._runJob(
+                'DailyAnimeSync',
+                async () => {
+
+                    if (!this.animeSync) {
+                        return;
+                    }
+
+                    logger.info(
+                        '[Cron:Anime] Sincronização iniciada.'
+                    );
+
+                    await this.animeSync.syncSeasonAnimes();
+                }
+            );
+
+        });
+
+        /**
+         * ==========================================
+         * WEEKLY MAINTENANCE
+         * ==========================================
+         */
+        cron.schedule('0 4 * * 0', async () => {
+
+            await this._runJob(
+                'WeeklyContentMaintenance',
+                async () => {
+
+                    logger.info(
+                        '[Cron] Manutenção semanal iniciada.'
+                    );
+
+                    if (
+                        this.charSync &&
+                        typeof this.charSync.syncPendingAnimes === 'function'
+                    ) {
+                        await this.charSync.syncPendingAnimes();
+                    }
+
+                    if (
+                        !this.questionGen ||
+                        typeof db.query !== 'function'
+                    ) {
+                        return;
+                    }
+
+                    let recentAnimes = [];
+
+                    try {
+
+                        const result = await db.query(`
+                            SELECT id
+                            FROM public.animes
+                            ORDER BY created_at DESC
+                            LIMIT 5
+                        `);
+
+                        recentAnimes = result.rows || [];
+
+                    } catch (err) {
+
+                        logger.warn(
+                            '[Cron] Banco indisponível durante manutenção semanal.'
+                        );
+
+                        return;
+                    }
+
+                    for (const anime of recentAnimes) {
+
+                        try {
+
+                            await this.questionGen.generateForAnime(
+                                anime.id
+                            );
+
+                        } catch (err) {
+
+                            logger.warn(
+                                `[Cron] Falha ao gerar questões para anime ${anime.id}`
+                            );
+
+                        }
+
+                    }
+
+                }
+            );
+
+        });
+
+        /**
+         * ==========================================
+         * INFRASTRUCTURE CLEANUP
+         * ==========================================
+         */
+        cron.schedule('0 */6 * * *', async () => {
+
+            await this._runJob(
+                'InfrastructureCleanup',
+                async () => {
+
+                    logger.info(
+                        '[Cron] Limpeza de infraestrutura.'
+                    );
+
+                    const client = cacheProvider?.client;
+
+                    if (
+                        !cacheProvider?.enabled ||
+                        !client
+                    ) {
+                        return;
+                    }
+
+                    try {
+
+                        if (typeof client.del === 'function') {
+
+                            await client.del(
+                                'otaku_clash:leaderboard:global'
+                            );
+
+                        }
+
+                    } catch (err) {
+
+                        logger.warn(
+                            '[Cron] Falha na limpeza do cache.'
+                        );
+
+                    }
+
+                }
+            );
+
+        });
+
+        /**
+         * ==========================================
+         * SESSION CLEANUP
+         * ==========================================
+         */
+        cron.schedule('0 * * * *', async () => {
+
+            await this._runJob(
+                'SessionCleanup',
+                async () => {
+
+                    if (typeof db.query !== 'function') {
+                        return;
+                    }
+
+                    try {
+
+                        await db.query(`
+                            UPDATE public.matches
+                            SET
+                                status='FINISHED',
+                                ended_at=NOW()
+                            WHERE
+                                status='WAITING'
+                                AND created_at <
+                                NOW() - INTERVAL '2 hours'
+                        `);
+
+                    } catch (err) {
+
+                        logger.warn(
+                            '[Cron] Session cleanup ignorado.'
+                        );
+
+                    }
+
+                }
+            );
+
+        });
+
+        /**
+         * ==========================================
+         * PRESENCE RECONCILIATION
+         * ==========================================
+         */
+        cron.schedule('*/5 * * * *', async () => {
+
+            await this._runJob(
+                'PresenceReconciliation',
+                async () => {
+
+                    const client = cacheProvider?.client;
+
+                    if (
+                        !cacheProvider?.enabled ||
+                        !client
+                    ) {
+                        return;
+                    }
+
+                    if (
+                        typeof client.smembers !== 'function'
+                    ) {
+                        return;
+                    }
+
+                    try {
+
+                        const onlineUsers =
+                            await client.smembers(
+                                'presence:online_users'
+                            );
+
+                        if (
+                            !onlineUsers ||
+                            onlineUsers.length === 0
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            typeof db.query !== 'function'
+                        ) {
+                            return;
+                        }
+
+                        const result = await db.query(`
+                            UPDATE public.profiles
+                            SET is_online = false
+                            WHERE
+                                is_online = true
+                                AND last_seen <
+                                NOW() - INTERVAL '10 minutes'
+                            RETURNING id
+                        `);
+
+                        const users =
+                            result.rows || [];
+
+                        if (
+                            typeof client.srem === 'function'
+                        ) {
+
+                            for (const user of users) {
+
+                                await client.srem(
+                                    'presence:online_users',
+                                    user.id
+                                );
+
+                            }
+
+                        }
+
+                        if (users.length > 0) {
+
+                            logger.info(
+                                `[Cron] ${users.length} utilizadores removidos da presença.`
+                            );
+
+                        }
+
+                    } catch (err) {
+
+                        logger.warn(
+                            '[Cron] Presence reconciliation ignorada.'
+                        );
+
+                    }
+
+                }
+            );
+
+        });
+
+        logger.info(
+            '✅ Cron Service carregado com sucesso.'
+        );
+    }
+
+    /**
+     * ==========================================
+     * SAFE JOB WRAPPER
+     * ==========================================
+     */
+    async _runJob(jobName, fn) {
+
+        const start = Date.now();
+
+        try {
+
+            logger.info(
+                `[Job] ${jobName} iniciado`
+            );
+
+            await fn();
+
+            logger.info(
+                `[Job] ${jobName} concluído em ${
+                    Date.now() - start
+                }ms`
+            );
+
+        } catch (error) {
+
+            logger.error(
+                `[Job] ${jobName} falhou`,
+                {
+                    message: error.message,
+                    stack: error.stack
+                }
+            );
+
+        }
+
+    }
+
 }
 
 module.exports = new CronService();
