@@ -1,7 +1,7 @@
 /**
  * 🛠️ OTAKU CLASH ANGOLA - ERROR HANDLER CENTRAL
- * Versão: 2.1.2 - Anti-Object-Null & Structural Error Shield
- * Descrição: Middleware centralizado de gerenciamento, normalização e logging de exceções.
+ * Versão: 2.1.4 - Advanced Logging & Precision Error Shield
+ * Descrição: Middleware centralizado de gerenciamento, normalização, logging e respostas de exceções.
  */
 
 const logger = require('../../config/logger');
@@ -11,7 +11,7 @@ const env = require('../../config/env');
 class ErrorHandler {
   /**
    * Converte erros desconhecidos, nativos ou de bibliotecas em AppError estruturado.
-   * Aplica também o patch contra mensagens vazias "{}" vindas do Provedor Auth.
+   * Aplica também o patch de segurança contra mensagens vazias "{}" do Provedor Auth.
    */
   static handleError(err) {
     let error = err;
@@ -62,23 +62,28 @@ class ErrorHandler {
     // Normaliza o erro recebido utilizando as regras de negócio e infraestrutura
     const error = ErrorHandler.handleError(err);
 
-    // Logging estratégico baseado no tipo e severidade do erro
-    if (error.statusCode >= 500) {
-      logger.error(`[Critical Error] ${req.method} ${req.url} - Status: ${error.statusCode} - Message: ${error.message}`, { 
+    // Logging estratégico baseado no tipo, código de status HTTP e severidade do erro
+    if (error.statusCode === 401 || error.statusCode === 400 || error.statusCode === 403) {
+      // Log como aviso operacional (erros controlados de validação ou de autenticação)
+      logger.warn(`[Auth-Warning] ${req.method} ${req.url} - ${error.message}`);
+    } else if (error.statusCode >= 500) {
+      // Log como erro crítico (erros inesperados ou falhas internas de servidor)
+      logger.error(`[Critical-Error] ${req.method} ${req.url} - ${error.message}`, { 
         stack: error.stack 
       });
     } else {
-      logger.warn(`[Operational Error] ${req.method} ${req.url} - Status: ${error.statusCode} - Message: ${error.message}`);
+      // Outros erros operacionais mapeados (ex: 404, 409, 422)
+      logger.warn(`[Operational-Error] ${req.method} ${req.url} - Status ${error.statusCode} - ${error.message}`);
     }
 
-    // Estruturação da resposta padrão HTTP JSON
+    // Estruturação da resposta padrão HTTP JSON entregue ao cliente frontend
     const response = {
       status: 'error',
       message: error.message,
       ...(env.NODE_ENV === 'development' && { stack: error.stack })
     };
 
-    // Injeta detalhes granulares adicionais se a origem do erro for um ZodError
+    // Injeta detalhes granulares adicionais se a origem do erro for um ZodError mapeado
     if (err.name === 'ZodError') {
       response.errors = err.errors.map(e => ({
         field: e.path.join('.'),
