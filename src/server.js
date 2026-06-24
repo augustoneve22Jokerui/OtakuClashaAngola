@@ -1,8 +1,8 @@
 /**
  * ⚡ OTAKU CLASH ANGOLA - SERVER BOOTSTRAP (THE ENGINE)
- * Versão: 3.4.0 - Anti-Timeout & Ultra Robust "Full-Full" Edition
+ * Versão: 3.5.0 - Final Operational Logic & Ultra Robust "Full-Full" Edition
  * Descrição: Ponto de entrada principal com abertura imediata de porta anti-timeout do Render,
- *            validação assíncrona de banco via Frankfurt Pooler com recuo dinâmico e proteção anti-crash.
+ *            validação assíncrona de banco via Frankfurt Pooler com recuo dinâmico de 10s e proteção anti-crash.
  */
 
 const http = require('http');
@@ -24,7 +24,7 @@ const server = http.createServer(app);
  * Inicializa a porta HTTP imediatamente para satisfazer o proxy reverso (Render/Heroku)
  * e aciona os serviços de infraestrutura crítica em background de forma ultra-resiliente.
  */
-async function startSystem() {
+async function bootstrap() {
   const PORT = env.PORT || 5000;
 
   logger.info(`✨ [System] Iniciando boot do servidor em modo: ${env.NODE_ENV}`);
@@ -39,26 +39,26 @@ async function startSystem() {
 🛡️  OTAKU CLASH ANGOLA - BACKEND ONLINE
 🌐  URL: ${env.API_URL || 'http://localhost:' + PORT}
 🔌  PORTA: ${PORT}
-🚀  STATUS: BOOTING & INITIALIZING PLUGINS...
+🚀  STATUS: FULL OPERATIONAL
 ========================================================
     `);
   });
 
   /**
-   * 🛰️ 2. STARTUP DOS MÓDULOS EM SEGUNDO PLANO
+   * 🛰️ 2. STARTUP DOS MÓDULOS CORE EM SEGUNDO PLANO
    */
   try {
     socketServer.init(server);
-    logger.info('🚀 [Socket.IO] Motor de tempo real operacional.');
+    logger.info('🚀 [Socket.IO] Motores de tempo real ativos e operacionais.');
   } catch (error) {
-    logger.error('⚠️ [Socket.IO] Falha parcial na inicialização do Socket:', error.message);
+    logger.error('⚠️ [Services] Falha parcial na inicialização do Socket:', error.message);
   }
 
   try {
     cronService.start();
-    logger.info('📅 [CronService] Agendador de tarefas em segundo plano activo.');
+    logger.info('📅 [CronService] Agendador de tarefas em segundo plano ativo.');
   } catch (error) {
-    logger.error('⚠️ [CronService] Falha parcial na inicialização do Cron:', error.message);
+    logger.error('⚠️ [Services] Falha parcial na inicialização do Cron:', error.message);
   }
 
   /**
@@ -76,17 +76,16 @@ async function startSystem() {
   }
 
   /**
-   * 🐘 4. VALIDAÇÃO DE BANCO DE DADOS ASSÍNCRONA COM RETRY DINÂMICO
+   * 🐘 4. LOOP DE CONEXÃO COM O BANCO DE DADOS (RETRY INFINITO)
    * O loop impede travamento do servidor e tenta reconexão contínua em falhas de rede.
    */
-  let dbConnected = false;
-  while (!dbConnected) {
+  let connected = false;
+  while (!connected) {
     try {
-      logger.info('🐘 [Database] Tentando conectar ao PostgreSQL (Frankfurt Pooler)...');
+      logger.info('🐘 [Database] Validando conexão com PostgreSQL...');
       await db.query('SELECT 1');
-      dbConnected = true;
-      logger.info('✅ [Database] Conexão estabelecida e validada com sucesso.');
-      logger.info('🚀 [System] STATUS ATUALIZADO: FULL OPERATIONAL READY');
+      connected = true;
+      logger.info('✅ [PostgreSQL] Banco de dados pronto para transações.');
     } catch (error) {
       const errorMsg = error.message || '';
 
@@ -98,9 +97,11 @@ async function startSystem() {
         // Encerra imediatamente o processo para evitar overload e loops infinitos no proxy
         process.exit(1);
       } else {
-        // Falhas normais de timeout ou oscilação de rede de Frankfurt: Aguarda 5s e reavalia
-        logger.error(`❌ [Database] Falha de comunicação de rede: ${errorMsg}. Tentando reconexão em 5s...`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        // Falhas normais de timeout ou oscilação de rede de Frankfurt: Aguarda 10s e reavalia
+        logger.error('❌ [Database] Falha ao conectar. Verifique as credenciais no DATABASE_URL.');
+        logger.info(`🐘 [Database] Detalhe do erro: ${errorMsg}`);
+        logger.info('🐘 [Database] Tentando reconectar em 10 segundos...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
       }
     }
   }
@@ -111,7 +112,7 @@ async function startSystem() {
  * Evita a corrupção de transações ativas durante ciclos de CI/CD ou redeployments.
  */
 async function gracefulShutdown(signal) {
-  logger.warn(`♻️ [System] ${signal} recebido. Iniciando encerramento seguro...`);
+  logger.warn(`⚠️ [System] ${signal} recebido. Finalizando processos...`);
 
   // Define um timeout de segurança limite (Deadman Switch) para forçar a saída caso o pool trave
   const forceExit = setTimeout(() => {
@@ -166,4 +167,4 @@ process.on('uncaughtException', (err) => {
 });
 
 // Lança o motor completo de execução do servidor
-startSystem();
+bootstrap();
