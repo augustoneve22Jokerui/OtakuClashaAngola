@@ -1,10 +1,20 @@
+/**
+ * 🚨 OTAKU CLASH ANGOLA - APP ERROR STRUCT
+ * Versão: 2.1.2 - Constructor Safe String Shield
+ * Descrição: Classe customizada de exceções operacionais e de infraestrutura.
+ */
+
 class AppError extends Error {
   constructor(message, statusCode = 500, isOperational = true, stack = '') {
-    super(message);
-
+    // 🔥 FIX DEFINITIVO: Garante de forma forçada que a mensagem seja uma string legível
+    const finalMessage = typeof message === 'object' && message !== null 
+      ? (message.message || JSON.stringify(message)) 
+      : message;
+    
+    super(finalMessage);
+    
     this.statusCode = statusCode;
     this.isOperational = isOperational;
-
     this.name = this.constructor.name;
 
     if (stack) {
