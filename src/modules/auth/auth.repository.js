@@ -1,7 +1,7 @@
 /**
  * 🔐 OTAKU CLASH ANGOLA - AUTH REPOSITORY (ULTRA RESILIENT)
- * Versão: 2.5.0 - Enterprise "Full-Full" Edition
- * Descrição: Camada de persistência para identidade, integração Supabase e perfis locais.
+ * Versão: 2.5.1 - Destructuring Shield & Enterprise "Full-Full" Edition
+ * Descrição: Camada de persistência para identidade, integração Supabase e perfis locais com proteção anti-crash.
  */
 
 const BaseRepository = require('../../core/base/BaseRepository');
@@ -42,6 +42,7 @@ class AuthRepository extends BaseRepository {
   /**
    * 🔍 BUSCA PERFIL LOCAL COM JOIN DE AUTENTICAÇÃO
    * Garante a recuperação de dados do PostgreSQL e do Auth do Supabase em um só passo.
+   * Protegido contra quebras de desestruturação caso o banco retorne estruturas inesperadas.
    */
   async findById(id) {
     const query = `
@@ -57,11 +58,17 @@ class AuthRepository extends BaseRepository {
     `;
     
     try {
-      const { rows } = await this.db.query(query, [id]);
-      return rows[0] || null;
+      const result = await this.db.query(query, [id]);
+      
+      // 🛡️ Destructuring Shield: Validação profunda antes de acessar propriedades de retorno
+      if (!result || !result.rows || result.rows.length === 0) {
+        return null;
+      }
+      
+      return result.rows[0];
     } catch (error) {
       logger.error(`[AuthRepo:Database] Erro ao recuperar perfil ${id}: ${error.message}`);
-      // Retornamos null para que o AuthService possa acionar o Auto-Healing
+      // Retornamos null para que o AuthService possa acionar o Auto-Healing com segurança
       return null;
     }
   }
@@ -95,20 +102,21 @@ class AuthRepository extends BaseRepository {
     `;
 
     try {
-      const { rows } = await this.db.query(query, [
+      const result = await this.db.query(query, [
         id, 
         username, 
         full_name, 
         role || 'USER'
       ]);
 
-      if (rows.length > 0) {
+      // 🛡️ Destructuring Shield aplicado à resposta do banco de dados
+      if (result && result.rows && result.rows.length > 0) {
         // Garante que a carteira financeira também exista para o utilizador
         await this._ensureWallet(id);
-        return rows[0];
+        return result.rows[0];
       }
       
-      throw new Error('Falha ao processar inserção/atualização de perfil.');
+      throw new Error('Falha ao processar inserção/atualização de perfil no banco.');
     } catch (error) {
       logger.error(`[AuthRepo:AutoHealing] Falha crítica: ${error.message}`);
       throw error;
@@ -137,9 +145,13 @@ class AuthRepository extends BaseRepository {
   async checkConflicts(username) {
     const query = `SELECT 1 FROM public.profiles WHERE username = $1 LIMIT 1`;
     try {
-      const { rows } = await this.db.query(query, [username]);
-      return { usernameExists: rows.length > 0 };
+      const result = await this.db.query(query, [username]);
+      
+      // 🛡️ Destructuring Shield contra retorno malformado do driver
+      const exists = !!(result && result.rows && result.rows.length > 0);
+      return { usernameExists: exists };
     } catch (error) {
+      logger.error(`[AuthRepo:checkConflicts] Erro na verificação de username: ${error.message}`);
       return { usernameExists: false };
     }
   }
