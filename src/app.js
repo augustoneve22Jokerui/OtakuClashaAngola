@@ -1,6 +1,6 @@
 /**
  * 🚀 OTAKU CLASH ANGOLA - APP CORE ORCHESTRATOR
- * Versão: 3.0.0 - Ultra Robust "Full-Full" Edition
+ * Versão: 3.1.0 - Ultra Robust "Zero-Error" Edition
  * Descrição: Configuração de infraestrutura, segurança, CORS e pipeline de requisições.
  */
 
@@ -11,7 +11,7 @@ const compression = require('compression');
 const morgan = require('morgan');
 const path = require('path');
 
-// Core Infrastructure
+// Middlewares e Configurações
 const env = require('./config/env');
 const AppError = require('./core/errors/AppError');
 const errorMiddleware = require('./middlewares/error.middleware');
@@ -22,20 +22,8 @@ const setupSwagger = require('./docs/swaggerConfig');
 const app = express();
 
 /**
- * 🛡️ CONFIGURAÇÃO DE SEGURANÇA (HELMET)
- * Protege contra vulnerabilidades comuns (XSS, Clickjacking, etc).
- */
-app.use(helmet({
-  // Desabilitado para permitir o carregamento de recursos do Dashboard Admin e CDNs
-  contentSecurityPolicy: false,
-  // Permite que o App Flutter e Admin carreguem imagens de origens cruzadas (Supabase/S3)
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  crossOriginEmbedderPolicy: false
-}));
-
-/**
  * 🌐 CONFIGURAÇÃO DE CORS (ZERO COMMUNICATION ERRORS)
- * Implementação resiliente para garantir acesso do Flutter e Dashboard Admin.
+ * Corrigido para permitir cabeçalhos customizados do frontend.
  */
 const allowedOrigins = [
   'https://otakuclash.onrender.com',      // Frontend Admin Produção
@@ -47,17 +35,16 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // 1. Permite requisições sem origin (Apps Mobile Flutter, Postman, cURL)
+    // Permite requisições sem origin (como Mobile Apps Flutter ou cURL)
     if (!origin) return callback(null, true);
     
-    // 2. Validação dinâmica de domínios permitidos
     const isAllowed = allowedOrigins.includes(origin);
     const isDev = env.NODE_ENV === 'development';
 
     if (isAllowed || isDev) {
       callback(null, true);
     } else {
-      console.error(`[Security:CORS] Origem bloqueada: ${origin}`);
+      console.error(`[Security:CORS] Origem bloqueada pela política: ${origin}`);
       callback(new Error('Bloqueado pelo CORS: Origem não autorizada.'), false);
     }
   },
@@ -69,55 +56,65 @@ app.use(cors({
     'Accept', 
     'x-no-cache',
     'fcm-token',
+    'x-app-version',  // 👈 CORREÇÃO: Adicionado para permitir o cabeçalho do Admin
+    'X-App-Version',  // 👈 CORREÇÃO: Case-sensitivity protection
     'timezone'
   ],
   exposedHeaders: ['Content-Disposition'],
-  credentials: true, // Obrigatório para handshakes de Socket.IO e Cookies
+  credentials: true,
   optionsSuccessStatus: 200
 }));
 
 /**
- * ⚡ PERFORMANCE E INFRAESTRUTURA
+ * 🔒 SEGURANÇA (HELMET)
  */
-app.use(compression()); // Compactação Gzip para todas as respostas
-app.use(express.json({ limit: '15mb' })); // Suporte a payloads pesados (Uploads Base64)
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false
+}));
+
+/**
+ * ⚡ PERFORMANCE E PARSERS
+ */
+app.use(compression());
+app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 /**
- * 📊 MONITORAMENTO E AUDITORIA
+ * 📊 MONITORAMENTO
  */
 if (env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
-app.use(loggingMiddleware); // Log de tráfego centralizado
-app.use(payloadLogger);     // Debug de payloads em desenvolvimento
+app.use(loggingMiddleware);
+app.use(payloadLogger);
 
 /**
- * 📂 RECURSOS ESTÁTICOS
+ * 📂 ARQUIVOS ESTÁTICOS E DOCS
  */
 app.use('/public', express.static(path.join(__dirname, '../public')));
-
-/**
- * 📖 DOCUMENTAÇÃO (SWAGGER)
- */
 setupSwagger(app);
 
 /**
- * 🛣️ ROTEAMENTO UNIFICADO (API V1)
- * Centraliza todos os módulos (Auth, Quiz, Wallet, Admin, etc).
+ * 🛣️ ROTEAMENTO UNIFICADO
+ * O arquivo routes/index.js já define o prefixo /api/v1
  */
 app.use('/', routes);
 
 /**
- * 🔍 HANDLER DE ROTAS INEXISTENTES (404)
+ * 🔍 TRATAMENTO GLOBAL DE 404
+ * Se a requisição chegou aqui, nenhuma rota anterior (incluindo as de /api/v1) capturou.
  */
 app.all('*', (req, res, next) => {
-  next(AppError.notFound(`O recurso [ ${req.method} ${req.originalUrl} ] não foi localizado no servidor Otaku Clash.`));
+  const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  logger.warn(`[Route:NotFound] 404 - ${req.method} ${fullUrl}`);
+  
+  next(AppError.notFound(`O recurso [ ${req.method} ${req.originalUrl} ] não existe neste servidor.`));
 });
 
 /**
- * 🚨 HANDLER DE ERROS GLOBAL (THE FINAL DEFENSE)
- * Garante que NENHUM erro derrube o processo e que as respostas sejam JSON.
+ * 🚨 HANDLER DE ERROS GLOBAL
  */
 app.use(errorMiddleware);
 
