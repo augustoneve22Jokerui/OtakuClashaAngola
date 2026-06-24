@@ -3,10 +3,9 @@
  * Versão: 2.0.0 - Enterprise Grade (Automated Content)
  * Descrição: Gera automaticamente questões de quiz baseadas nos metadados do catálogo.
  */
-
-const db = require('../../../config/database');
-const logger = require('../../../config/logger');
-const AppError = require('../../../core/errors/AppError');
+const db = require('../../config/database');
+const logger = require('../../config/logger');
+const AppError = require('../../core/errors/AppError');
 
 class QuestionGeneratorService {
   /**
