@@ -1,6 +1,6 @@
 /**
  * 🐘 OTAKU CLASH ANGOLA - POSTGRESQL DATABASE PROVIDER
- * Versão: 3.4.0 - Frankfurt IPv4 Pooler Ready & Ultra Robust "Full-Full" Edition
+ * Versão: 3.5.0 - Final Node Fix & Ultra Robust "Full-Full" Edition
  * Descrição: Gestão de Pool de conexões otimizada para instâncias t4g.nano, PgBouncer e Supavisor.
  *            Inclui mitigação de fechamento de portas remoto, proteção contra leaks e telemetria ativa.
  */
@@ -20,7 +20,7 @@ const poolConfig = {
   connectionString: cleanConnectionString,
   // Limite de 10 conexões estáveis para evitar saturação em t4g.nano e planos cloud de entrada
   max: 10, 
-  idleTimeoutMillis: 20000,       // Tempo reduzido para liberar conexões ociosas mais rápido
+  idleTimeoutMillis: 30000,       // Tempo otimizado para o ciclo de vida de conexões ociosas
   connectionTimeoutMillis: 15000, // Timeout de conexão ajustado para mitigar oscilações de rede
   // Configuração SSL obrigatória para Cloud Providers (Supabase/Render/AWS)
   ssl: { 
