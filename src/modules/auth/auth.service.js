@@ -1,7 +1,7 @@
 /**
  * 🔐 OTAKU CLASH ANGOLA - AUTH SERVICE (ULTRA RESILIENT)
- * Versão: 2.1.4 - Final Production Fix & Debugging Precision
- * Descrição: Orquestrador de identidade, sessões e auto-healing de perfis locais.
+ * Versão: 2.1.5 - Absolute 500 Error Shield & Debugging Precision
+ * Descrição: Orquestrador de identidade, sessões, auto-healing de perfis locais e registro.
  */
 
 const BaseService = require('../../core/base/BaseService');
@@ -129,7 +129,7 @@ class AuthService extends BaseService {
 
             // Erros fatais imprevistos (Tratados como 500 Interno)
             logger.error(`[AuthService:Fatal] Erro interno crítico: ${error.message}`, { stack: error.stack });
-            throw AppError.internal('Falha crítica no processo de login.');
+            throw AppError.internal('Falha ao processar autenticação no servidor.');
         }
     }
 
