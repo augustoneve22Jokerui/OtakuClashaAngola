@@ -1,11 +1,39 @@
+/**
+ * 🛡️ OTAKU CLASH ANGOLA - API ROUTER
+ * Versão: 2.1.0 - Enterprise Production Ready
+ * Descrição:
+ * Orquestrador central de rotas da API.
+ * Responsável por Health Checks, Versionamento,
+ * Registro de Módulos e Fallback Global.
+ */
+
 const express = require('express');
+
 const { rateLimiterGlobal } = require('../middlewares/rateLimiter.middleware');
 const { loggingMiddleware } = require('../middlewares/logging.middleware');
+
 const AppError = require('../core/errors/AppError');
+
 const db = require('../config/database');
 const cacheProvider = require('../config/cache');
 
-// Importação das rotas dos módulos (Conforme estrutura definida)
+const router = express.Router();
+
+/**
+ * ============================================================
+ * MIDDLEWARES GLOBAIS
+ * ============================================================
+ */
+
+router.use(loggingMiddleware);
+router.use(rateLimiterGlobal);
+
+/**
+ * ============================================================
+ * IMPORTAÇÃO DOS MÓDULOS
+ * ============================================================
+ */
+
 const authRoutes = require('../modules/auth/auth.routes');
 const usersRoutes = require('../modules/users/users.routes');
 const profilesRoutes = require('../modules/profiles/profiles.routes');
@@ -23,75 +51,247 @@ const battleRoyaleRoutes = require('../modules/battleRoyale/battleRoyale.routes'
 const tournamentRoutes = require('../modules/tournaments/tournaments.routes');
 const adminRoutes = require('../modules/admin/admin.routes');
 
-const router = express.Router();
+/**
+ * ============================================================
+ * LANDING PAGE API
+ * ============================================================
+ */
+
+router.get('/', (req, res) => {
+  return res.status(200).json({
+    success: true,
+    name: 'Otaku Clash Angola API',
+    version: '2.1.0',
+    status: 'ONLINE',
+    message: 'Bem-vindo ao núcleo competitivo de elite.',
+    timestamp: new Date().toISOString()
+  });
+});
 
 /**
- * Middlewares Globais de Rota
+ * ============================================================
+ * HEALTH CHECK ENTERPRISE
+ * ============================================================
  */
-router.use(loggingMiddleware);
-router.use(rateLimiterGlobal);
 
-/**
- * Health Check Endpoint
- * Valida a saúde de toda a infraestrutura backend.
- */
 router.get('/health', async (req, res) => {
+
   const healthStatus = {
     status: 'UP',
     timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+
     services: {
       database: 'DOWN',
-      redis: 'DOWN',
-      uptime: process.uptime()
+      redis: 'DOWN'
     }
   };
 
   try {
-    // Valida Database
+
+    /**
+     * DATABASE
+     */
     await db.query('SELECT 1');
     healthStatus.services.database = 'UP';
-    
-    // Valida Redis
-    const redisPing = await cacheProvider.client.ping();
-    if (redisPing === 'PONG') healthStatus.services.redis = 'UP';
 
-    res.status(200).json(healthStatus);
+    /**
+     * REDIS
+     */
+    try {
+
+      if (
+        cacheProvider &&
+        cacheProvider.client &&
+        typeof cacheProvider.client.ping === 'function'
+      ) {
+
+        const pong = await cacheProvider.client.ping();
+
+        if (pong === 'PONG') {
+          healthStatus.services.redis = 'UP';
+        } else {
+          healthStatus.services.redis = 'DEGRADED';
+        }
+
+      } else {
+
+        healthStatus.services.redis = 'MEMORY_MODE';
+
+      }
+
+    } catch (redisError) {
+
+      healthStatus.services.redis = 'DEGRADED';
+
+    }
+
+    return res.status(200).json(healthStatus);
+
   } catch (error) {
+
     healthStatus.status = 'PARTIALLY_DEGRADED';
-    res.status(207).json(healthStatus);
+
+    return res.status(207).json({
+      ...healthStatus,
+      error: error.message
+    });
+
   }
+
 });
 
 /**
- * Registro de Módulos da API (v1)
+ * ============================================================
+ * API V1
+ * ============================================================
  */
+
 const apiV1 = express.Router();
 
+/**
+ * AUTH
+ */
 apiV1.use('/auth', authRoutes);
+
+/**
+ * USERS
+ */
 apiV1.use('/users', usersRoutes);
+
+/**
+ * PROFILES
+ */
 apiV1.use('/profiles', profilesRoutes);
+
+/**
+ * ANIMES
+ */
 apiV1.use('/animes', animesRoutes);
+
+/**
+ * CHARACTERS
+ */
 apiV1.use('/characters', charactersRoutes);
+
+/**
+ * QUESTIONS
+ */
 apiV1.use('/questions', questionsRoutes);
+
+/**
+ * QUIZ
+ */
 apiV1.use('/quiz', quizRoutes);
+
+/**
+ * MATCHES
+ */
 apiV1.use('/matches', matchesRoutes);
+
+/**
+ * BATTLE ROYALE
+ */
 apiV1.use('/battle-royale', battleRoyaleRoutes);
+
+/**
+ * TOURNAMENTS
+ */
 apiV1.use('/tournaments', tournamentRoutes);
+
+/**
+ * WALLETS
+ */
 apiV1.use('/wallets', walletRoutes);
+
+/**
+ * RANKINGS
+ */
 apiV1.use('/rankings', rankingsRoutes);
+
+/**
+ * ACHIEVEMENTS
+ */
 apiV1.use('/achievements', achievementsRoutes);
+
+/**
+ * GUILDS
+ */
 apiV1.use('/guilds', guildRoutes);
+
+/**
+ * NOTIFICATIONS
+ */
 apiV1.use('/notifications', notificationRoutes);
+
+/**
+ * ADMIN
+ */
 apiV1.use('/admin', adminRoutes);
 
-// Monta a v1 no roteador principal
+/**
+ * ============================================================
+ * MOUNT API
+ * ============================================================
+ */
+
 router.use('/api/v1', apiV1);
 
 /**
- * Fallback para rotas não encontradas
+ * ============================================================
+ * API INFO V1
+ * ============================================================
  */
-router.all('*', (req, res, next) => {
-  next(AppError.notFound(`Não foi possível encontrar ${req.originalUrl} neste servidor.`));
+
+router.get('/api/v1', (req, res) => {
+
+  return res.status(200).json({
+    success: true,
+    api: 'Otaku Clash Angola',
+    version: 'v1',
+    status: 'ONLINE',
+    endpoints: {
+      auth: '/api/v1/auth',
+      users: '/api/v1/users',
+      profiles: '/api/v1/profiles',
+      animes: '/api/v1/animes',
+      characters: '/api/v1/characters',
+      questions: '/api/v1/questions',
+      quiz: '/api/v1/quiz',
+      matches: '/api/v1/matches',
+      battleRoyale: '/api/v1/battle-royale',
+      tournaments: '/api/v1/tournaments',
+      wallets: '/api/v1/wallets',
+      rankings: '/api/v1/rankings',
+      achievements: '/api/v1/achievements',
+      guilds: '/api/v1/guilds',
+      notifications: '/api/v1/notifications',
+      admin: '/api/v1/admin'
+    }
+  });
+
 });
+
+/**
+ * ============================================================
+ * 404 FALLBACK
+ * ============================================================
+ */
+
+router.all('*', (req, res, next) => {
+
+  next(
+    AppError.notFound(
+      `Não foi possível encontrar ${req.originalUrl} neste servidor.`
+    )
+  );
+
+});
+
+/**
+ * ============================================================
+ * EXPORT
+ * ============================================================
+ */
 
 module.exports = router;
