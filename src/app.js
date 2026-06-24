@@ -1,6 +1,6 @@
 /**
  * 🚀 OTAKU CLASH ANGOLA - APP CORE ORCHESTRATOR
- * Versão: 3.1.0 - Render Proxy Fixed & Ultra Robust "Full-Full" Edition
+ * Versão: 3.2.0 - Final CORS & Proxy Fix & Ultra Robust "Full-Full" Edition
  * Descrição: Configuração de infraestrutura, segurança, CORS com suporte a proxy e pipeline de requisições.
  */
 
@@ -46,9 +46,9 @@ app.use(helmet({
 const allowedOrigins = [
   'https://otakuclash.onrender.com',       // Frontend Admin Produção
   'https://otakuclashaangola.onrender.com', // Self-reference (Backend)
-  'http://localhost:3000',                // Desenvolvimento Local Admin
-  'http://localhost:5000',                // Desenvolvimento Local Backend
-  'http://localhost:8080'                 // Simuladores Flutter/Web
+  'http://localhost:3000',                 // Desenvolvimento Local Admin
+  'http://localhost:5000',                 // Desenvolvimento Local Backend
+  'http://localhost:8080'                  // Simuladores Flutter/Web
 ];
 
 app.use(cors({
@@ -60,6 +60,7 @@ app.use(cors({
     const isAllowed = allowedOrigins.includes(origin);
     const isDev = env.NODE_ENV === 'development';
 
+    // Suporte amplo à interoperabilidade (origin: true flexível com as origens explicitadas)
     if (isAllowed || isDev) {
       callback(null, true);
     } else {
@@ -73,6 +74,7 @@ app.use(cors({
     'Authorization', 
     'X-Requested-With', 
     'Accept', 
+    'X-App-Version', // ⚡ Essencial para bater com o api.js do frontend
     'x-no-cache',
     'fcm-token',
     'timezone'
