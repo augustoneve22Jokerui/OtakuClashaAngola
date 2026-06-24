@@ -1,16 +1,11 @@
 /**
-
-* 🛡️ OTAKU CLASH ANGOLA - API ROUTER
-* Versão: 2.1.1 - Enterprise Production Ready
-* Descrição:
-* Orquestrador central de rotas da API.
-* Responsável por:
-* * Landing Page
-* * Health Check
-* * Versionamento
-* * Registro de Módulos
-* * Fallback Global
-    */
+ * 🛡️ OTAKU CLASH ANGOLA - API ROUTER
+ * Versão: 2.1.2 - Enterprise Path Matching Ready
+ * Descrição:
+ * Orquestrador central de rotas da API.
+ * Responsável por Health Checks, Versionamento,
+ * Registro de Módulos e Fallback Global sem conflitos de rotas.
+ */
 
 const express = require('express');
 
@@ -25,22 +20,18 @@ const cacheProvider = require('../config/cache');
 const router = express.Router();
 
 /**
-
-* ============================================================
-* MIDDLEWARES GLOBAIS
-* ============================================================
-  */
-
+ * ============================================================
+ * MIDDLEWARES GLOBAIS
+ * ============================================================
+ */
 router.use(loggingMiddleware);
 router.use(rateLimiterGlobal);
 
 /**
-
-* ============================================================
-* IMPORTAÇÃO DOS MÓDULOS
-* ============================================================
-  */
-
+ * ============================================================
+ * IMPORTAÇÃO DOS MÓDULOS
+ * ============================================================
+ */
 const authRoutes = require('../modules/auth/auth.routes');
 const usersRoutes = require('../modules/users/users.routes');
 const profilesRoutes = require('../modules/profiles/profiles.routes');
@@ -59,264 +50,162 @@ const tournamentRoutes = require('../modules/tournaments/tournaments.routes');
 const adminRoutes = require('../modules/admin/admin.routes');
 
 /**
-
-* ============================================================
-* LANDING PAGE
-* ============================================================
-  */
-
-router.get('/', (req, res) => {
-return res.status(200).json({
-success: true,
-service: 'Otaku Clash Angola API',
-version: '2.1.1',
-environment: process.env.NODE_ENV || 'development',
-status: 'ONLINE',
-timestamp: new Date().toISOString()
-});
-});
-
-/**
-
-* ============================================================
-* HEALTH CHECK
-* ============================================================
-  */
-
+ * ============================================================
+ * HEALTH CHECK ENTERPRISE
+ * ============================================================
+ */
 router.get('/health', async (req, res) => {
+  const healthStatus = {
+    status: 'UP',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    services: {
+      database: 'DOWN',
+      redis: 'DOWN'
+    }
+  };
 
-const healthStatus = {
-status: 'UP',
-timestamp: new Date().toISOString(),
-uptime: process.uptime(),
-services: {
-database: 'DOWN',
-redis: 'DOWN'
-}
-};
+  try {
+    /**
+     * DATABASE VALIDATION
+     */
+    await db.query('SELECT 1');
+    healthStatus.services.database = 'UP';
 
-try {
+    /**
+     * REDIS VALIDATION
+     */
+    try {
+      if (
+        cacheProvider &&
+        typeof cacheProvider.isRedis === 'function' && 
+        cacheProvider.isRedis()
+      ) {
+        if (cacheProvider.client && typeof cacheProvider.client.ping === 'function') {
+          const pong = await cacheProvider.client.ping();
+          healthStatus.services.redis = pong === 'PONG' ? 'UP' : 'DEGRADED';
+        } else {
+          healthStatus.services.redis = 'UP';
+        }
+      } else if (cacheProvider && typeof cacheProvider.isRedis === 'function') {
+        healthStatus.services.redis = 'MEMORY_MODE';
+      } else if (cacheProvider && cacheProvider.client && typeof cacheProvider.client.ping === 'function') {
+        const pong = await cacheProvider.client.ping();
+        healthStatus.services.redis = pong === 'PONG' ? 'UP' : 'DEGRADED';
+      } else {
+        healthStatus.services.redis = 'MEMORY_MODE';
+      }
+    } catch (redisError) {
+      healthStatus.services.redis = 'DEGRADED';
+    }
 
-```
-await db.query('SELECT 1');
-healthStatus.services.database = 'UP';
+    return res.status(200).json(healthStatus);
 
-try {
-
-  if (
-    cacheProvider &&
-    cacheProvider.client &&
-    typeof cacheProvider.client.ping === 'function'
-  ) {
-
-    const pong = await cacheProvider.client.ping();
-
-    healthStatus.services.redis =
-      pong === 'PONG'
-        ? 'UP'
-        : 'DEGRADED';
-
-  } else {
-
-    healthStatus.services.redis = 'MEMORY_MODE';
-
+  } catch (error) {
+    healthStatus.status = 'PARTIALLY_DEGRADED';
+    return res.status(207).json({
+      ...healthStatus,
+      error: error.message
+    });
   }
-
-} catch (redisError) {
-
-  healthStatus.services.redis = 'DEGRADED';
-
-}
-
-return res.status(200).json(healthStatus);
-```
-
-} catch (error) {
-
-```
-return res.status(207).json({
-  ...healthStatus,
-  status: 'PARTIALLY_DEGRADED',
-  error: error.message
-});
-```
-
-}
-
 });
 
 /**
-
-* ============================================================
-* API V1
-* ============================================================
-  */
-
+ * ============================================================
+ * API V1 DEFINITION (SUB-ROUTER)
+ * ============================================================
+ */
 const apiV1 = express.Router();
 
-/**
-
-* AUTH
-  */
-  apiV1.use('/auth', authRoutes);
-
-/**
-
-* USERS
-  */
-  apiV1.use('/users', usersRoutes);
-
-/**
-
-* PROFILES
-  */
-  apiV1.use('/profiles', profilesRoutes);
-
-/**
-
-* ANIMES
-  */
-  apiV1.use('/animes', animesRoutes);
+apiV1.use('/auth', authRoutes);
+apiV1.use('/users', usersRoutes);
+apiV1.use('/profiles', profilesRoutes);
+apiV1.use('/animes', animesRoutes);
+apiV1.use('/characters', charactersRoutes);
+apiV1.use('/questions', questionsRoutes);
+apiV1.use('/quiz', quizRoutes);
+apiV1.use('/matches', matchesRoutes);
+apiV1.use('/battle-royale', battleRoyaleRoutes);
+apiV1.use('/tournaments', tournamentRoutes);
+apiV1.use('/wallets', walletRoutes);
+apiV1.use('/rankings', rankingsRoutes);
+apiV1.use('/achievements', achievementsRoutes);
+apiV1.use('/guilds', guildRoutes);
+apiV1.use('/notifications', notificationRoutes);
+apiV1.use('/admin', adminRoutes);
 
 /**
-
-* CHARACTERS
-  */
-  apiV1.use('/characters', charactersRoutes);
-
-/**
-
-* QUESTIONS
-  */
-  apiV1.use('/questions', questionsRoutes);
-
-/**
-
-* QUIZ
-  */
-  apiV1.use('/quiz', quizRoutes);
-
-/**
-
-* MATCHES
-  */
-  apiV1.use('/matches', matchesRoutes);
-
-/**
-
-* BATTLE ROYALE
-  */
-  apiV1.use('/battle-royale', battleRoyaleRoutes);
-
-/**
-
-* TOURNAMENTS
-  */
-  apiV1.use('/tournaments', tournamentRoutes);
+ * ============================================================
+ * API INFO V1
+ * Montagem explícita e direta no roteador principal para evitar
+ * conflitos ou sobreposição do interceptor de rotas 404.
+ * ============================================================
+ */
+router.get('/api/v1', (req, res) => {
+  return res.status(200).json({
+    success: true,
+    api: 'Otaku Clash Angola',
+    version: 'v1',
+    status: 'ONLINE',
+    endpoints: {
+      auth: '/api/v1/auth',
+      users: '/api/v1/users',
+      profiles: '/api/v1/profiles',
+      animes: '/api/v1/animes',
+      characters: '/api/v1/characters',
+      questions: '/api/v1/questions',
+      quiz: '/api/v1/quiz',
+      matches: '/api/v1/matches',
+      battleRoyale: '/api/v1/battle-royale',
+      tournaments: '/api/v1/tournaments',
+      wallets: '/api/v1/wallets',
+      rankings: '/api/v1/rankings',
+      achievements: '/api/v1/achievements',
+      guilds: '/api/v1/guilds',
+      notifications: '/api/v1/notifications',
+      admin: '/api/v1/admin'
+    }
+  });
+});
 
 /**
-
-* WALLETS
-  */
-  apiV1.use('/wallets', walletRoutes);
-
-/**
-
-* RANKINGS
-  */
-  apiV1.use('/rankings', rankingsRoutes);
-
-/**
-
-* ACHIEVEMENTS
-  */
-  apiV1.use('/achievements', achievementsRoutes);
-
-/**
-
-* GUILDS
-  */
-  apiV1.use('/guilds', guildRoutes);
-
-/**
-
-* NOTIFICATIONS
-  */
-  apiV1.use('/notifications', notificationRoutes);
-
-/**
-
-* ADMIN
-  */
-  apiV1.use('/admin', adminRoutes);
-
-/**
-
-* ============================================================
-* MOUNT API V1
-* ============================================================
-  */
-
+ * MONTAGEM DO SUB-ROTEADOR V1 NO PREFIXO DA API
+ */
 router.use('/api/v1', apiV1);
 
 /**
-
-* ============================================================
-* API INFO
-* ============================================================
-  */
-
-router.get('/api/v1', (req, res) => {
-
-return res.status(200).json({
-success: true,
-api: 'Otaku Clash Angola',
-version: 'v1',
-status: 'ONLINE',
-endpoints: {
-auth: '/api/v1/auth',
-users: '/api/v1/users',
-profiles: '/api/v1/profiles',
-animes: '/api/v1/animes',
-characters: '/api/v1/characters',
-questions: '/api/v1/questions',
-quiz: '/api/v1/quiz',
-matches: '/api/v1/matches',
-battleRoyale: '/api/v1/battle-royale',
-tournaments: '/api/v1/tournaments',
-wallets: '/api/v1/wallets',
-rankings: '/api/v1/rankings',
-achievements: '/api/v1/achievements',
-guilds: '/api/v1/guilds',
-notifications: '/api/v1/notifications',
-admin: '/api/v1/admin'
-}
-});
-
+ * ============================================================
+ * LANDING PAGE API
+ * ============================================================
+ */
+router.get('/', (req, res) => {
+  return res.status(200).json({
+    success: true,
+    name: 'Otaku Clash Angola API',
+    version: '2.1.2',
+    status: 'ONLINE',
+    message: 'Bem-vindo ao núcleo competitivo de elite.',
+    timestamp: new Date().toISOString()
+  });
 });
 
 /**
-
-* ============================================================
-* 404 GLOBAL
-* ============================================================
-  */
-
+ * ============================================================
+ * 404 FALLBACK 
+ * Deve ser estritamente o último manipulador de caminhos do arquivo.
+ * ============================================================
+ */
 router.all('*', (req, res, next) => {
-
-next(
-AppError.notFound(
-`Não foi possível encontrar ${req.originalUrl} neste servidor.`
-)
-);
-
+  next(
+    AppError.notFound(
+      `Não foi possível encontrar o caminho ${req.originalUrl} neste servidor.`
+    )
+  );
 });
 
 /**
-
-* ============================================================
-* EXPORT
-* ============================================================
-  */
-
+ * ============================================================
+ * EXPORTAÇÃO
+ * ============================================================
+ */
 module.exports = router;
