@@ -1,9 +1,10 @@
 /**
  * 🛡️ OTAKU CLASH ANGOLA - NÚCLEO DA APLICAÇÃO (CLEAN ARCHITECTURE)
- * Versão: 2.0.1 - Enterprise Resilient (Production Ready)
+ * Versão: 2.0.2 - Proxy & CORS Final Fix
  * Descrição:
- * Configuração central da aplicação, segurança,
- * middlewares globais, documentação e roteamento.
+ * Configuração central da aplicação, segurança avançada,
+ * middlewares globais, suporte a proxies de produção (Render),
+ * documentação Swagger e roteamento unificado.
  */
 
 const express = require('express');
@@ -18,8 +19,8 @@ const path = require('path');
 // ===============================
 
 const {
-  loggingMiddleware,
-  payloadLogger
+    loggingMiddleware,
+    payloadLogger
 } = require('./middlewares/logging.middleware');
 
 const errorMiddleware = require('./middlewares/error.middleware');
@@ -34,90 +35,86 @@ const setupSwagger = require('./docs/swaggerConfig');
 
 const app = express();
 
+/**
+ * 🌐 CONFIGURAÇÃO DE PROXY (CRÍTICO PARA RENDER/RATE LIMIT)
+ */
+app.set('trust proxy', 1); // Confia no primeiro proxy (Render)
+
 // ===============================
-// CORS CONFIGURATION
+// CORS CONFIGURATION (SOLUÇÃO DEFINITIVA)
 // ===============================
 
 const allowedOrigins = [
-  // PRODUÇÃO
-  'https://otakuclash.onrender.com',
-  'https://otakuclashaangola.onrender.com',
+    // PRODUÇÃO
+    'https://otakuclash.onrender.com',
+    'https://otakuclashaangola.onrender.com',
 
-  // LOCAL
-  'http://localhost:3000',
-  'http://localhost:5000',
-  'http://localhost:8080'
+    // LOCAL
+    'http://localhost:3000',
+    'http://localhost:5000',
+    'http://localhost:8080'
 ];
 
 app.use(cors({
-  origin: (origin, callback) => {
+    origin: (origin, callback) => {
+        /**
+         * Mobile Apps (Flutter), Postman, cURL
+         * e chamadas internas não enviam o header Origin.
+         */
+        if (!origin) {
+            return callback(null, true);
+        }
 
-    /**
-     * Mobile Apps
-     * Flutter
-     * Postman
-     * cURL
-     * Internal Services
-     */
-    if (!origin) {
-      return callback(null, true);
-    }
+        const isAllowed = allowedOrigins.includes(origin);
+        const isDevelopment = env.NODE_ENV === 'development';
 
-    const isAllowed =
-      allowedOrigins.includes(origin);
+        if (isAllowed || isDevelopment) {
+            return callback(null, true);
+        }
 
-    const isDevelopment =
-      env.NODE_ENV === 'development';
+        console.warn(`[Security:CORS] Origem bloqueada: ${origin}`);
 
-    if (isAllowed || isDevelopment) {
-      return callback(null, true);
-    }
+        return callback(
+            new AppError(
+                `A origem ${origin} não possui permissão de acesso por CORS.`,
+                403
+            )
+        );
+    },
 
-    console.warn(
-      `[Security:CORS] Origem bloqueada: ${origin}`
-    );
+    credentials: true,
 
-    return callback(
-      new AppError(
-        `A origem ${origin} não possui permissão de acesso.`,
-        403
-      )
-    );
-  },
+    methods: [
+        'GET',
+        'POST',
+        'PUT',
+        'PATCH',
+        'DELETE',
+        'OPTIONS'
+    ],
 
-  credentials: true,
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'Accept',
+        'Origin',
+        'x-no-cache',
+        'fcm-token',
 
-  methods: [
-    'GET',
-    'POST',
-    'PUT',
-    'PATCH',
-    'DELETE',
-    'OPTIONS'
-  ],
+        // ADMIN DASHBOARD & CONSISTÊNCIA CORS
+        'x-app-version',
 
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'x-no-cache',
-    'fcm-token',
+        // SOCKET.IO
+        'x-socket-id'
+    ],
 
-    // ADMIN DASHBOARD
-    'x-app-version',
+    exposedHeaders: [
+        'Content-Range',
+        'X-Content-Range'
+    ],
 
-    // SOCKET.IO
-    'x-socket-id'
-  ],
-
-  exposedHeaders: [
-    'Content-Range',
-    'X-Content-Range'
-  ],
-
-  optionsSuccessStatus: 200
+    optionsSuccessStatus: 200
 }));
 
 // ===============================
@@ -125,15 +122,13 @@ app.use(cors({
 // ===============================
 
 app.use(
-  helmet({
-    contentSecurityPolicy: false,
-
-    crossOriginResourcePolicy: {
-      policy: 'cross-origin'
-    },
-
-    crossOriginEmbedderPolicy: false
-  })
+    helmet({
+        contentSecurityPolicy: false,
+        crossOriginResourcePolicy: {
+            policy: 'cross-origin'
+        },
+        crossOriginEmbedderPolicy: false
+    })
 );
 
 // ===============================
@@ -147,16 +142,16 @@ app.use(compression());
 // ===============================
 
 app.use(
-  express.json({
-    limit: '15mb'
-  })
+    express.json({
+        limit: '15mb'
+    })
 );
 
 app.use(
-  express.urlencoded({
-    extended: true,
-    limit: '15mb'
-  })
+    express.urlencoded({
+        extended: true,
+        limit: '15mb'
+    })
 );
 
 // ===============================
@@ -164,7 +159,7 @@ app.use(
 // ===============================
 
 if (env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
+    app.use(morgan('dev'));
 }
 
 app.use(loggingMiddleware);
@@ -175,10 +170,10 @@ app.use(payloadLogger);
 // ===============================
 
 app.use(
-  '/public',
-  express.static(
-    path.join(__dirname, '../public')
-  )
+    '/public',
+    express.static(
+        path.join(__dirname, '../public')
+    )
 );
 
 // ===============================
@@ -186,14 +181,14 @@ app.use(
 // ===============================
 
 app.get('/', (req, res) => {
-  res.status(200).json({
-    success: true,
-    service: 'Otaku Clash Angola API',
-    version: '2.0.1',
-    environment: env.NODE_ENV,
-    status: 'ONLINE',
-    timestamp: new Date().toISOString()
-  });
+    res.status(200).json({
+        success: true,
+        service: 'Otaku Clash Angola API',
+        version: '2.0.2',
+        environment: env.NODE_ENV,
+        status: 'ONLINE',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // ===============================
@@ -213,11 +208,11 @@ app.use('/', routes);
 // ===============================
 
 app.all('*', (req, res, next) => {
-  next(
-    AppError.notFound(
-      `O recurso [ ${req.method} ${req.originalUrl} ] não existe no ecossistema Otaku Clash Angola.`
-    )
-  );
+    next(
+        AppError.notFound(
+            `O recurso [ ${req.method} ${req.originalUrl} ] não existe no ecossistema Otaku Clash Angola.`
+        )
+    );
 });
 
 // ===============================
