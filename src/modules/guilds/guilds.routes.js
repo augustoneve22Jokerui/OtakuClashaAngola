@@ -1,21 +1,23 @@
 /**
  * 🛡️ OTAKU CLASH ANGOLA - GUILDS ROUTES
- * Versão: 2.0.0 - Enterprise Secured
+ * Versão: 2.0.0 - Enterprise Secured (Final Version)
  * Descrição: Endpoints para gestão de clãs, membros, patentes e interações sociais.
  */
 
 const express = require('express');
 const guildsController = require('./guilds.controller');
 const authMiddleware = require('../../middlewares/auth.middleware');
+const roleMiddleware = require('../../middlewares/role.middleware');
 const validationMiddleware = require('../../middlewares/validation.middleware');
+const { Roles } = require('../../core/constants/Roles');
 const CommonSchema = require('../../validators/common.schema');
 const { z } = require('zod');
 
 const router = express.Router();
 
 /**
- * 🔒 PROTEÇÃO DE SESSÃO
- * Todas as rotas sociais exigem utilizador autenticado via JWT.
+ * 🔒 PROTEÇÃO DE SESSÃO GLOBAL
+ * Todas as rotas de clãs exigem que o utilizador esteja autenticado via JWT.
  */
 router.use(authMiddleware);
 
@@ -42,7 +44,7 @@ router.get(
 /**
  * 🆔 OBTER MINHA GUILDA
  * GET /api/v1/guilds/me
- * Nota: Definida antes de /:id para evitar conflito.
+ * Retorna os detalhes do clã ao qual o utilizador logado pertence.
  */
 router.get(
   '/me',
@@ -57,9 +59,14 @@ router.post(
   '/',
   validationMiddleware({
     body: z.object({
-      name: z.string().min(3, 'O nome do clã deve ter pelo menos 3 caracteres').max(50),
-      tag: z.string().min(3).max(5, 'A TAG deve ter entre 3 e 5 caracteres').toUpperCase(),
-      description: z.string().max(255).optional(),
+      name: z.string()
+        .min(3, 'O nome do clã deve ter pelo menos 3 caracteres')
+        .max(50, 'Nome demasiado longo'),
+      tag: z.string()
+        .min(3, 'A TAG deve ter pelo menos 3 caracteres')
+        .max(5, 'A TAG deve ter no máximo 5 caracteres')
+        .toUpperCase(),
+      description: z.string().max(255, 'Descrição demasiado longa').optional(),
       logo_url: z.string().url('A URL do logo é inválida').optional()
     })
   }),
@@ -67,15 +74,16 @@ router.post(
 );
 
 /**
- * 🔍 CONSULTAR DETALHES DE UMA GUILDA
+ * 🔍 CONSULTAR DETALHES DE UMA GUILDA ESPECÍFICA
  * GET /api/v1/guilds/:id
+ * FIX: Corrigido ReferenceError de charactersController para guildsController.
  */
 router.get(
   '/:id',
   validationMiddleware({
     params: z.object({ id: CommonSchema.uuid })
   }),
-  guildsController.safe(charactersController.getDetails)
+  guildsController.safe(guildsController.getDetails)
 );
 
 /**
@@ -104,7 +112,7 @@ router.post(
 
 /**
  * ==================================================
- * ROTAS DE MODERAÇÃO E LIDERANÇA
+ * ROTAS DE MODERAÇÃO E LIDERANÇA INTERNA
  * ==================================================
  */
 
@@ -120,7 +128,9 @@ router.patch(
       userId: CommonSchema.uuid 
     }),
     body: z.object({
-      rank: z.enum(['OFFICER', 'MEMBER'])
+      rank: z.enum(['OFFICER', 'MEMBER'], {
+        errorMap: () => ({ message: "A patente deve ser OFFICER ou MEMBER" })
+      })
     })
   }),
   guildsController.safe(guildsController.updateMemberRank)
