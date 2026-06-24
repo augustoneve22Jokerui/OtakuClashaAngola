@@ -1,6 +1,6 @@
 /**
  * 🔐 OTAKU CLASH ANGOLA - AUTH SERVICE (ULTRA RESILIENT)
- * Versão: 2.1.3 - Final Supabase Error Parsing & Debugging Precision
+ * Versão: 2.1.4 - Final Production Fix & Debugging Precision
  * Descrição: Orquestrador de identidade, sessões e auto-healing de perfis locais.
  */
 
@@ -51,7 +51,7 @@ class AuthService extends BaseService {
                 // Tradução cirúrgica de mensagens técnicas do ecossistema Supabase para o usuário final
                 if (msg.includes('Invalid login credentials') || msg.includes('invalid_credentials')) {
                     msg = 'E-mail ou senha incorrectos.';
-                } else if (msg.toLowerCase().includes('confirm')) {
+                } else if (msg.toLowerCase().includes('confirm') || msg.includes('Email not confirmed')) {
                     msg = 'Por favor, confirme o seu e-mail antes de aceder.';
                 } else if (statusCode === 400) {
                     msg = 'Credenciais inválidas. Verifique seu e-mail e senha.';
