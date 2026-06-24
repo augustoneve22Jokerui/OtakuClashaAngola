@@ -1,6 +1,6 @@
 /**
  * 🔐 OTAKU CLASH ANGOLA - AUTH REPOSITORY (ULTRA RESILIENT)
- * Versão: 2.5.1 - Destructuring Shield & Enterprise "Full-Full" Edition
+ * Versão: 2.6.0 - Robust Destructuring Guards & Enterprise "Full-Full" Edition
  * Descrição: Camada de persistência para identidade, integração Supabase e perfis locais com proteção anti-crash.
  */
 
@@ -67,7 +67,7 @@ class AuthRepository extends BaseRepository {
       
       return result.rows[0];
     } catch (error) {
-      logger.error(`[AuthRepo:Database] Erro ao recuperar perfil ${id}: ${error.message}`);
+      logger.error(`[AuthRepo:findById] Erro: ${error.message}`);
       // Retornamos null para que o AuthService possa acionar o Auto-Healing com segurança
       return null;
     }
@@ -80,7 +80,7 @@ class AuthRepository extends BaseRepository {
   async createProfileSafely(profileData) {
     const { id, username, full_name, role } = profileData;
     
-    // UPSERT: Se já existir, apenas atualiza. Se não, insere.
+    // UPSERT: Se já existir, apenas atualiza. Se não, insere os estados iniciais.
     const query = `
       INSERT INTO public.profiles (
         id, 
@@ -116,9 +116,9 @@ class AuthRepository extends BaseRepository {
         return result.rows[0];
       }
       
-      throw new Error('Falha ao processar inserção/atualização de perfil no banco.');
+      throw new Error('Retorno vazio na criação de perfil.');
     } catch (error) {
-      logger.error(`[AuthRepo:AutoHealing] Falha crítica: ${error.message}`);
+      logger.error(`[AuthRepo:createProfileSafely] Falha: ${error.message}`);
       throw error;
     }
   }
@@ -134,8 +134,8 @@ class AuthRepository extends BaseRepository {
     `;
     try {
       await this.db.query(query, [userId]);
-    } catch (err) {
-      logger.error(`[AuthRepo:Wallet] Erro na verificação: ${err.message}`);
+    } catch (e) {
+      logger.warn(`[AuthRepo:Wallet] ${e.message}`);
     }
   }
 
