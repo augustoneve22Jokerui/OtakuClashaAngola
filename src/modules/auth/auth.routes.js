@@ -1,3 +1,9 @@
+/**
+ * 🛣️ OTAKU CLASH ANGOLA - AUTH ROUTES
+ * Versão: 2.5.0 - Enterprise Secured "Full-Full"
+ * Descrição: Definição de endpoints para ciclo de vida de identidade e acesso.
+ */
+
 const express = require('express');
 const authController = require('./auth.controller');
 const authMiddleware = require('../../middlewares/auth.middleware');
@@ -8,7 +14,25 @@ const AuthSchema = require('../../validators/auth.schema');
 const router = express.Router();
 
 /**
- * Registro de Novo Usuário
+ * ==================================================
+ * 🔓 ROTAS PÚBLICAS (SEM TOKEN)
+ * Protegidas por Rate Limit para evitar abusos.
+ * ==================================================
+ */
+
+/**
+ * 🎟️ LOGIN DE UTILIZADOR
+ * POST /api/v1/auth/login
+ */
+router.post(
+  '/login',
+  rateLimiterAuth, // 10 tentativas por hora
+  validationMiddleware({ body: AuthSchema.login }),
+  authController.safe(authController.login)
+);
+
+/**
+ * 📝 REGISTO DE NOVO PLAYER
  * POST /api/v1/auth/register
  */
 router.post(
@@ -19,18 +43,7 @@ router.post(
 );
 
 /**
- * Autenticação de Usuário (Login)
- * POST /api/v1/auth/login
- */
-router.post(
-  '/login',
-  rateLimiterAuth,
-  validationMiddleware({ body: AuthSchema.login }),
-  authController.safe(authController.login)
-);
-
-/**
- * Renovação de Token (Refresh Token)
+ * 🔄 RENOVAÇÃO DE SESSÃO (REFRESH TOKEN)
  * POST /api/v1/auth/refresh
  */
 router.post(
@@ -40,7 +53,7 @@ router.post(
 );
 
 /**
- * Solicitação de Recuperação de Senha
+ * 🔑 SOLICITAR RECUPERAÇÃO DE SENHA
  * POST /api/v1/auth/forgot-password
  */
 router.post(
@@ -50,7 +63,7 @@ router.post(
 );
 
 /**
- * Redefinição de Senha
+ * 🛠️ REDEFINIR SENHA (VIA TOKEN DE RESET)
  * POST /api/v1/auth/reset-password
  */
 router.post(
@@ -60,12 +73,18 @@ router.post(
 );
 
 /**
- * Obter dados do usuário logado (Check Session)
+ * ==================================================
+ * 🔒 ROTAS PROTEGIDAS (REQUEREM JWT)
+ * ==================================================
+ */
+
+/**
+ * 👤 CHECK SESSÃO / MEUS DADOS
  * GET /api/v1/auth/me
  */
 router.get(
   '/me',
-  authMiddleware,
+  authMiddleware, // Apenas este endpoint exige o token Bearer
   authController.safe(authController.me)
 );
 
