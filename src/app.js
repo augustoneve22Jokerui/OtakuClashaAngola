@@ -1,10 +1,7 @@
 /**
- * 🛡️ OTAKU CLASH ANGOLA - NÚCLEO DA APLICAÇÃO (CLEAN ARCHITECTURE)
- * Versão: 2.0.2 - Proxy & CORS Final Fix
- * Descrição:
- * Configuração central da aplicação, segurança avançada,
- * middlewares globais, suporte a proxies de produção (Render),
- * documentação Swagger e roteamento unificado.
+ * 🚀 OTAKU CLASH ANGOLA - APP CORE ORCHESTRATOR
+ * Versão: 3.0.0 - Ultra Robust "Full-Full" Edition
+ * Descrição: Configuração de infraestrutura, segurança, CORS e pipeline de requisições.
  */
 
 const express = require('express');
@@ -14,215 +11,114 @@ const compression = require('compression');
 const morgan = require('morgan');
 const path = require('path');
 
-// ===============================
-// INTERNAL IMPORTS
-// ===============================
-
-const {
-    loggingMiddleware,
-    payloadLogger
-} = require('./middlewares/logging.middleware');
-
-const errorMiddleware = require('./middlewares/error.middleware');
-const routes = require('./routes/index');
-const AppError = require('./core/errors/AppError');
+// Core Infrastructure
 const env = require('./config/env');
+const AppError = require('./core/errors/AppError');
+const errorMiddleware = require('./middlewares/error.middleware');
+const { loggingMiddleware, payloadLogger } = require('./middlewares/logging.middleware');
+const routes = require('./routes/index');
 const setupSwagger = require('./docs/swaggerConfig');
-
-// ===============================
-// APP INSTANCE
-// ===============================
 
 const app = express();
 
 /**
- * 🌐 CONFIGURAÇÃO DE PROXY (CRÍTICO PARA RENDER/RATE LIMIT)
+ * 🛡️ CONFIGURAÇÃO DE SEGURANÇA (HELMET)
+ * Protege contra vulnerabilidades comuns (XSS, Clickjacking, etc).
  */
-app.set('trust proxy', 1); // Confia no primeiro proxy (Render)
+app.use(helmet({
+  // Desabilitado para permitir o carregamento de recursos do Dashboard Admin e CDNs
+  contentSecurityPolicy: false,
+  // Permite que o App Flutter e Admin carreguem imagens de origens cruzadas (Supabase/S3)
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false
+}));
 
-// ===============================
-// CORS CONFIGURATION (SOLUÇÃO DEFINITIVA)
-// ===============================
-
+/**
+ * 🌐 CONFIGURAÇÃO DE CORS (ZERO COMMUNICATION ERRORS)
+ * Implementação resiliente para garantir acesso do Flutter e Dashboard Admin.
+ */
 const allowedOrigins = [
-    // PRODUÇÃO
-    'https://otakuclash.onrender.com',
-    'https://otakuclashaangola.onrender.com',
-
-    // LOCAL
-    'http://localhost:3000',
-    'http://localhost:5000',
-    'http://localhost:8080'
+  'https://otakuclash.onrender.com',      // Frontend Admin Produção
+  'https://otakuclashaangola.onrender.com', // Self-reference (Backend)
+  'http://localhost:3000',                // Desenvolvimento Local Admin
+  'http://localhost:5000',                // Desenvolvimento Local Backend
+  'http://localhost:8080'                 // Simuladores Flutter/Web
 ];
 
 app.use(cors({
-    origin: (origin, callback) => {
-        /**
-         * Mobile Apps (Flutter), Postman, cURL
-         * e chamadas internas não enviam o header Origin.
-         */
-        if (!origin) {
-            return callback(null, true);
-        }
+  origin: function (origin, callback) {
+    // 1. Permite requisições sem origin (Apps Mobile Flutter, Postman, cURL)
+    if (!origin) return callback(null, true);
+    
+    // 2. Validação dinâmica de domínios permitidos
+    const isAllowed = allowedOrigins.includes(origin);
+    const isDev = env.NODE_ENV === 'development';
 
-        const isAllowed = allowedOrigins.includes(origin);
-        const isDevelopment = env.NODE_ENV === 'development';
-
-        if (isAllowed || isDevelopment) {
-            return callback(null, true);
-        }
-
-        console.warn(`[Security:CORS] Origem bloqueada: ${origin}`);
-
-        return callback(
-            new AppError(
-                `A origem ${origin} não possui permissão de acesso por CORS.`,
-                403
-            )
-        );
-    },
-
-    credentials: true,
-
-    methods: [
-        'GET',
-        'POST',
-        'PUT',
-        'PATCH',
-        'DELETE',
-        'OPTIONS'
-    ],
-
-    allowedHeaders: [
-        'Content-Type',
-        'Authorization',
-        'X-Requested-With',
-        'Accept',
-        'Origin',
-        'x-no-cache',
-        'fcm-token',
-
-        // ADMIN DASHBOARD & CONSISTÊNCIA CORS
-        'x-app-version',
-
-        // SOCKET.IO
-        'x-socket-id'
-    ],
-
-    exposedHeaders: [
-        'Content-Range',
-        'X-Content-Range'
-    ],
-
-    optionsSuccessStatus: 200
+    if (isAllowed || isDev) {
+      callback(null, true);
+    } else {
+      console.error(`[Security:CORS] Origem bloqueada: ${origin}`);
+      callback(new Error('Bloqueado pelo CORS: Origem não autorizada.'), false);
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With', 
+    'Accept', 
+    'x-no-cache',
+    'fcm-token',
+    'timezone'
+  ],
+  exposedHeaders: ['Content-Disposition'],
+  credentials: true, // Obrigatório para handshakes de Socket.IO e Cookies
+  optionsSuccessStatus: 200
 }));
 
-// ===============================
-// SECURITY
-// ===============================
+/**
+ * ⚡ PERFORMANCE E INFRAESTRUTURA
+ */
+app.use(compression()); // Compactação Gzip para todas as respostas
+app.use(express.json({ limit: '15mb' })); // Suporte a payloads pesados (Uploads Base64)
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-app.use(
-    helmet({
-        contentSecurityPolicy: false,
-        crossOriginResourcePolicy: {
-            policy: 'cross-origin'
-        },
-        crossOriginEmbedderPolicy: false
-    })
-);
-
-// ===============================
-// PERFORMANCE
-// ===============================
-
-app.use(compression());
-
-// ===============================
-// BODY PARSERS
-// ===============================
-
-app.use(
-    express.json({
-        limit: '15mb'
-    })
-);
-
-app.use(
-    express.urlencoded({
-        extended: true,
-        limit: '15mb'
-    })
-);
-
-// ===============================
-// REQUEST LOGGING
-// ===============================
-
+/**
+ * 📊 MONITORAMENTO E AUDITORIA
+ */
 if (env.NODE_ENV === 'development') {
-    app.use(morgan('dev'));
+  app.use(morgan('dev'));
 }
+app.use(loggingMiddleware); // Log de tráfego centralizado
+app.use(payloadLogger);     // Debug de payloads em desenvolvimento
 
-app.use(loggingMiddleware);
-app.use(payloadLogger);
+/**
+ * 📂 RECURSOS ESTÁTICOS
+ */
+app.use('/public', express.static(path.join(__dirname, '../public')));
 
-// ===============================
-// STATIC FILES
-// ===============================
-
-app.use(
-    '/public',
-    express.static(
-        path.join(__dirname, '../public')
-    )
-);
-
-// ===============================
-// HEALTH CHECK
-// ===============================
-
-app.get('/', (req, res) => {
-    res.status(200).json({
-        success: true,
-        service: 'Otaku Clash Angola API',
-        version: '2.0.2',
-        environment: env.NODE_ENV,
-        status: 'ONLINE',
-        timestamp: new Date().toISOString()
-    });
-});
-
-// ===============================
-// API DOCS
-// ===============================
-
+/**
+ * 📖 DOCUMENTAÇÃO (SWAGGER)
+ */
 setupSwagger(app);
 
-// ===============================
-// ROUTES
-// ===============================
-
+/**
+ * 🛣️ ROTEAMENTO UNIFICADO (API V1)
+ * Centraliza todos os módulos (Auth, Quiz, Wallet, Admin, etc).
+ */
 app.use('/', routes);
 
-// ===============================
-// NOT FOUND
-// ===============================
-
+/**
+ * 🔍 HANDLER DE ROTAS INEXISTENTES (404)
+ */
 app.all('*', (req, res, next) => {
-    next(
-        AppError.notFound(
-            `O recurso [ ${req.method} ${req.originalUrl} ] não existe no ecossistema Otaku Clash Angola.`
-        )
-    );
+  next(AppError.notFound(`O recurso [ ${req.method} ${req.originalUrl} ] não foi localizado no servidor Otaku Clash.`));
 });
 
-// ===============================
-// GLOBAL ERROR HANDLER
-// ===============================
-
+/**
+ * 🚨 HANDLER DE ERROS GLOBAL (THE FINAL DEFENSE)
+ * Garante que NENHUM erro derrube o processo e que as respostas sejam JSON.
+ */
 app.use(errorMiddleware);
-
-// ===============================
-// EXPORT
-// ===============================
 
 module.exports = app;
