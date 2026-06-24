@@ -1,7 +1,8 @@
 /**
  * ⚡ OTAKU CLASH ANGOLA - SERVER BOOTSTRAP (THE ENGINE)
- * Versão: 3.0.0 - Ultra Robust "Full-Full" Edition
- * Descrição: Ponto de entrada principal com gestão de ciclo de vida e resiliência de infraestrutura.
+ * Versão: 3.2.0 - Direct Database Validation & Ultra Robust "Full-Full" Edition
+ * Descrição: Ponto de entrada principal com validação de banco por IPv4 Pooler, 
+ *            gestão de ciclo de vida e resiliência de infraestrutura crítica.
  */
 
 const http = require('http');
@@ -42,31 +43,34 @@ try {
 
 /**
  * 🏗️ BOOTSTRAP INFALÍVEL (SAFE STARTUP)
+ * Realiza validações críticas de rede e infraestrutura antes de abrir a porta da aplicação.
  */
 async function bootstrap() {
   const PORT = env.PORT || 5000;
 
-  logger.info(`✨ [System] Iniciando boot em modo: ${env.NODE_ENV}`);
+  logger.info(`✨ [System] Iniciando boot do servidor em modo: ${env.NODE_ENV}`);
 
   try {
-    // 1. Verificação de Banco de Dados (Não-bloqueante)
-    // Se o banco falhar agora, o servidor ainda sobe para responder Health Checks
-    db.query('SELECT 1')
-      .then(() => logger.info('🐘 [PostgreSQL] Conexão validada com sucesso.'))
-      .catch((err) => logger.warn(`⚠️ [PostgreSQL] Modo Offline detectado: ${err.message}`));
+    // 1. Validação OBRIGATÓRIA do Banco de Dados antes de abrir a porta
+    logger.info('🐘 [System] Validando conexão com PostgreSQL...');
+    await db.query('SELECT NOW()');
+    logger.info('✅ [PostgreSQL] Banco de dados conectado via IPv4 Pooler.');
 
     // 2. Verificação de Redis (Híbrido)
-    if (hybridRedis.enabled) {
-      hybridRedis.client.ping()
-        .then(() => logger.info('🔴 [Redis] Cache distribuído conectado.'))
-        .catch((err) => logger.warn(`⚠️ [Redis] Fallback para memória activo: ${err.message}`));
+    if (hybridRedis && hybridRedis.enabled) {
+      try {
+        await hybridRedis.client.ping();
+        logger.info('🔴 [Redis] Cache distribuído conectado e operacional.');
+      } catch (err) {
+        logger.warn(`⚠️ [Redis] Falha no ping. Fallback para memória activo: ${err.message}`);
+      }
     } else {
-      logger.info('☁️ [Redis] Operando em modo de Memória Local (Fallback).');
+      logger.info('☁️ [Redis] Operando em modo de Memória Local (Fallback de Infraestrutura).');
     }
 
     /**
      * 🟢 START SERVER
-     * O servidor escuta primeiro, garantindo que o Render/Cloud veja a porta aberta.
+     * O servidor passa a escutar chamadas, sinalizando sucesso ao proxy (Render/Heroku).
      */
     server.listen(PORT, () => {
       logger.info(`
@@ -74,76 +78,78 @@ async function bootstrap() {
 🛡️  OTAKU CLASH ANGOLA - BACKEND ONLINE
 🌐  URL: ${env.API_URL || 'http://localhost:' + PORT}
 🔌  PORTA: ${PORT}
-🚀  STATUS: FULL ROBUST READY
+🚀  STATUS: FULL OPERATIONAL READY
 ========================================================
       `);
     });
 
   } catch (error) {
-    logger.error('❌ [Fatal] Erro catastrófico no Bootstrap:', error);
-    // Em caso de erro total que impeça o listen, aguardamos 5s e tentamos novamente
+    logger.error('💥 [Fatal] Erro catastrófico no Bootstrap:', error.message);
+    
+    // Em produção ou falha de infraestrutura, tenta nova reconexão em 5 segundos
+    logger.info('🐘 [System] Tentando restabelecer e reiniciar bootstrap em 5s...');
     setTimeout(bootstrap, 5000);
   }
 }
 
 /**
  * 🛑 GRACEFUL SHUTDOWN (ENCERRAMENTO SEGURO)
- * Garante que nenhuma transação seja cortada no meio durante o deploy.
+ * Garante que nenhuma transação seja corrompida no meio de uma operação durante deploys.
  */
 async function gracefulShutdown(signal) {
   logger.warn(`♻️ [System] ${signal} recebido. Iniciando encerramento seguro...`);
 
-  // Define um timeout de segurança para forçar o encerramento se travar
+  // Define um timeout de segurança (Deadman Switch) para forçar o encerramento se travar
   const forceExit = setTimeout(() => {
-    logger.error('🚨 [System] Forçando encerramento (Timeout).');
+    logger.error('🚨 [System] Forçando encerramento imediato via process.exit devido a travamento (Timeout 10s).');
     process.exit(1);
   }, 10000);
 
   server.close(async () => {
     try {
-      // 1. Fecha pool de conexões do Banco
+      // 1. Fecha pool de conexões do Banco de Dados
       await db.end();
-      logger.info('🐘 [PostgreSQL] Pool de conexões encerrado.');
+      logger.info('🐘 [PostgreSQL] Pool de conexões encerrado de forma limpa.');
 
       // 2. Fecha conexões do Redis
-      if (hybridRedis.client && typeof hybridRedis.client.quit === 'function') {
+      if (hybridRedis && hybridRedis.client && typeof hybridRedis.client.quit === 'function') {
         await hybridRedis.client.quit();
-        logger.info('🔴 [Redis] Conexão encerrada.');
+        logger.info('🔴 [Redis] Conexão de cache encerrada.');
       }
 
       clearTimeout(forceExit);
-      logger.info('✅ [System] Encerramento concluído com sucesso. Tchau!');
+      logger.info('✅ [System] Encerramento de processos concluído com sucesso.');
       process.exit(0);
 
     } catch (err) {
-      logger.error('❌ [System] Erro durante o encerramento:', err);
+      logger.error('❌ [System] Erro crítico durante as rotinas de encerramento:', err);
       process.exit(1);
     }
   });
 }
 
 /**
- * 🛡️ GESTÃO DE EXCEPÇÕES GLOBAIS
- * Impede que o processo morra por erros não tratados.
+ * 🛡️ GESTÃO DE EXCEPÇÕES GLOBAIS (ANTI-CRASH GUARDIAN)
+ * Impede a terminação abrupta da aplicação por rejeições ou erros não capturados diretamente.
  */
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('🚫 [UnhandledRejection] Promessa rejeitada não tratada:', {
+  logger.error('🚫 [UnhandledRejection] Promessa rejeitada não tratada capturada:', {
     reason: reason?.message || reason,
     stack: reason?.stack
   });
 });
 
 process.on('uncaughtException', (err) => {
-  logger.error('🔥 [Fatal] Erro crítico não capturado:', {
+  logger.error('🔥 [Fatal] Erro crítico absoluto não capturado na thread principal:', {
     message: err.message,
     stack: err.stack
   });
-  // Em exceções fatais, tentamos um shutdown gracioso antes de morrer
+  // Tenta realizar um desligamento gracioso para liberar recursos e pools pendentes antes de morrer
   gracefulShutdown('UncaughtException');
 });
 
-// Lança o motor
+// Lança o motor do servidor
 bootstrap();
