@@ -1,6 +1,6 @@
 /**
  * 🔐 OTAKU CLASH ANGOLA - AUTH SERVICE (ULTRA RESILIENT)
- * Versão: 2.1.2 - Anti-Object-Null Fix & Debugging Precision
+ * Versão: 2.1.3 - Final Supabase Error Parsing & Debugging Precision
  * Descrição: Orquestrador de identidade, sessões e auto-healing de perfis locais.
  */
 
@@ -10,6 +10,7 @@ const TokenHelper = require('../../utils/TokenHelper');
 const AppError = require('../../core/errors/AppError');
 const logger = require('../../config/logger');
 const emailService = require('../../services/notification/EmailService');
+const util = require('util'); // Para inspeção profunda de logs no ambiente de produção
 
 class AuthService extends BaseService {
     constructor() {
@@ -18,7 +19,7 @@ class AuthService extends BaseService {
 
     /**
      * 🔥 LOGIN COM AUTO-HEALING DE PERFIL
-     * Autentica no Supabase com captura resiliente de erros e normalização de objetos nulos/complexos.
+     * Autentica no Supabase com captura altamente precisa de logs e tratamento agressivo de erros.
      */
     async login(email, password) {
         try {
@@ -29,24 +30,37 @@ class AuthService extends BaseService {
             try {
                 authData = await this.repository.signInWithEmail(email, password);
             } catch (err) {
-                // 🔥 FIX DEFINITIVO: Extração forçada de string para evitar falhas de [object Object]
-                const rawMessage = err.message || (typeof err === 'string' ? err : JSON.stringify(err)) || 'Erro desconhecido no provedor';
+                // 🔥 LOG DE EMERGÊNCIA NO CONSOLE (Ideal para monitoramento no Render / VPS)
+                console.error("--- SUPABASE AUTH ERROR DEBUG ---");
+                console.error(util.inspect(err, { showHidden: false, depth: null, colors: true }));
+                
+                // Extração agressiva e normalização da mensagem de erro do provedor
+                let msg = "Falha na autenticação.";
+                if (err.message) {
+                    msg = err.message;
+                } else if (typeof err === 'string') {
+                    msg = err;
+                } else if (err.error_description) {
+                    msg = err.error_description;
+                } else {
+                    msg = JSON.stringify(err);
+                }
+
                 const statusCode = err.status || 401;
 
-                logger.warn(`[AuthService:Denied] Usuário: ${email} | Mensagem: ${rawMessage}`);
-                
-                // Mapeamento preciso de strings de erro comuns do ecossistema Supabase Auth
-                if (rawMessage.includes('Invalid login credentials') || rawMessage.includes('invalid_credentials')) {
-                    throw AppError.unauthorized('E-mail ou senha incorrectos.');
-                }
-                if (rawMessage.toLowerCase().includes('confirm')) {
-                    throw AppError.unauthorized('Por favor, confirme o seu e-mail antes de aceder.');
-                }
-                if (statusCode === 400) {
-                    throw AppError.unauthorized('Credenciais inválidas. Verifique seu e-mail e senha.');
+                // Tradução cirúrgica de mensagens técnicas do ecossistema Supabase para o usuário final
+                if (msg.includes('Invalid login credentials') || msg.includes('invalid_credentials')) {
+                    msg = 'E-mail ou senha incorrectos.';
+                } else if (msg.toLowerCase().includes('confirm')) {
+                    msg = 'Por favor, confirme o seu e-mail antes de aceder.';
+                } else if (statusCode === 400) {
+                    msg = 'Credenciais inválidas. Verifique seu e-mail e senha.';
                 }
 
-                throw new AppError(rawMessage, statusCode);
+                logger.warn(`[AuthService:Denied] Usuário: ${email} | Mensagem Final: ${msg}`);
+                
+                // Lançamos explicitamente como 401 para o ErrorHandler não converter em 500
+                throw new AppError(msg, 401);
             }
 
             if (!authData || !authData.user) {
@@ -58,7 +72,7 @@ class AuthService extends BaseService {
             // 2. Busca Perfil Local (public.profiles)
             let profile = await this.repository.findById(userId);
 
-            // 3. AUTO-HEALING: Se logou no Auth mas não tem profile no DB local (falha de trigger)
+            // 3. AUTO-HEALING: Se logou no Auth mas não tem profile no DB local (falha de trigger de banco)
             if (!profile) {
                 logger.warn(`[AuthService:AutoHealing] Criando perfil ausente para UID: ${userId}`);
                 
@@ -92,7 +106,7 @@ class AuthService extends BaseService {
 
             logger.info(`[AuthService:Success] Login concluído: ${profile.username} [${profile.role}]`);
 
-            // 6. Estrutura de retorno compatível com DTO e Frontend
+            // 6. Estrutura de retorno compatível com DTO e Camada de Apresentação
             return {
                 user: {
                     id: profile.id,
@@ -110,28 +124,28 @@ class AuthService extends BaseService {
             };
 
         } catch (error) {
-            // Repassa erros de negócio (AppError) com status corretos
+            // Repassa erros operacionais mapeados (AppError) sem modificações
             if (error instanceof AppError) throw error;
 
-            // Erros fatais ou inesperados internos (500)
+            // Erros fatais imprevistos (Tratados como 500 Interno)
             logger.error(`[AuthService:Fatal] Erro interno crítico: ${error.message}`, { stack: error.stack });
             throw AppError.internal('Falha crítica no processo de login.');
         }
     }
 
     /**
-     * 📝 REGISTRO DE USUÁRIO
+     * 📝 REGISTRO DE NOVO USUÁRIO
      */
     async register(userData) {
         try {
-            // 1. Verifica conflitos locais antes de chamar o Supabase
+            // 1. Verifica conflitos locais antes de acionar a API do Supabase Auth
             const { usernameExists } = await this.repository.checkConflicts(null, userData.username);
             
             if (usernameExists) {
                 throw AppError.conflict('Este nome de usuário já está sendo utilizado.');
             }
 
-            // 2. Registro no Supabase Auth
+            // 2. Criação da identidade no provedor Supabase Auth
             const { data, error } = await this.repository.supabase.auth.signUp({
                 email: userData.email,
                 password: userData.password,
@@ -150,7 +164,7 @@ class AuthService extends BaseService {
                 throw new Error(error.message);
             }
 
-            // 3. Envio de e-mail de boas-vindas em background
+            // 3. Dispara e-mail de boas-vindas assincronamente (Background Task)
             emailService.sendWelcomeEmail(userData.email, userData.username).catch(err => {
                 logger.error(`[AuthService:Email] Falha no envio de boas-vindas: ${err.message}`);
             });
@@ -164,7 +178,7 @@ class AuthService extends BaseService {
 
         } catch (error) {
             if (error instanceof AppError) throw error;
-            logger.error(`[AuthService] Erro no registro: ${error.message}`);
+            logger.error(`[AuthService:Register] Erro no registro: ${error.message}`);
             throw AppError.internal('Não foi possível completar o cadastro neste momento.');
         }
     }
@@ -174,17 +188,17 @@ class AuthService extends BaseService {
      */
     async refreshSession(refreshToken) {
         try {
-            // 1. Valida o refresh token
+            // 1. Descodifica e valida o token de atualização
             const decoded = TokenHelper.verifyRefreshToken(refreshToken);
             
-            // 2. Busca o perfil atualizado para carregar as permissões e a role corretas
+            // 2. Re-avalia o perfil local para sincronizar dados mutáveis (roles/bloqueios)
             const profile = await this.repository.findById(decoded.sub);
             
             if (!profile) {
                 throw AppError.unauthorized('Sessão inválida. Usuário não encontrado.');
             }
 
-            // 3. Gera novo access token com claims atualizadas do banco de dados
+            // 3. Emite novo access token com as claims atualizadas da persistência relacional
             const accessToken = TokenHelper.generateAccessToken({
                 id: profile.id,
                 role: profile.role,
@@ -202,5 +216,5 @@ class AuthService extends BaseService {
     }
 }
 
-// Exporta instância Singleton limpa
+// Exportação Singleton da classe totalmente funcional
 module.exports = new AuthService();
