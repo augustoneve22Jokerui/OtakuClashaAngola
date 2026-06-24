@@ -1,6 +1,6 @@
 /**
  * 🔐 OTAKU CLASH ANGOLA - AUTH SERVICE (ULTRA RESILIENT)
- * Versão: 2.1.0 - Resilient Auth Flow
+ * Versão: 2.1.1 - Debugging & Precision Login
  * Descrição: Orquestrador de identidade, sessões e auto-healing de perfis locais.
  */
 
@@ -18,34 +18,37 @@ class AuthService extends BaseService {
 
     /**
      * 🔥 LOGIN COM AUTO-HEALING DE PERFIL
-     * Autentica no Supabase com captura resiliente de erros e garante integridade do perfil local.
+     * Autentica no Supabase com captura altamente precisa de logs e erros de resposta.
      */
     async login(email, password) {
         try {
-            logger.info(`[AuthService] Tentativa de login: ${email}`);
+            logger.info(`[AuthService] Tentativa de login para: ${email}`);
 
             // 1. Autenticação no Supabase Auth externa com captura isolada
             let authData;
             try {
                 authData = await this.repository.signInWithEmail(email, password);
             } catch (supabaseErr) {
-                // Tratamento específico de erros mapeados do Supabase Auth
-                const errMsg = supabaseErr.message || '';
-                logger.warn(`[AuthService:Denied] ${email} - Razão: ${errMsg}`);
+                // 🔥 EXTRAÇÃO PRECISA DO ERRO
+                const errorMsg = supabaseErr.message || 'Erro desconhecido no provedor';
+                const errorStatus = supabaseErr.status || 401;
+                
+                logger.warn(`[AuthService:Denied] Usuário: ${email} | Mensagem: ${errorMsg}`);
+                
+                // Se o erro for de e-mail não confirmado, retornamos mensagem customizada amigável
+                if (errorMsg.toLowerCase().includes('confirm')) {
+                    throw AppError.unauthorized('Por favor, confirme o seu e-mail antes de aceder.');
+                }
 
-                if (supabaseErr.status === 400 || errMsg.includes('invalid_credentials')) {
+                if (errorStatus === 400 || errorMsg.includes('invalid_credentials')) {
                     throw AppError.unauthorized('Credenciais inválidas. Verifique seu e-mail e senha.');
                 }
-                
-                if (errMsg.includes('Email not confirmed')) {
-                    throw AppError.unauthorized('Sua conta ainda não foi confirmada. Verifique seu e-mail.');
-                }
 
-                throw AppError.unauthorized(errMsg || 'Credenciais inválidas.');
+                throw new AppError(errorMsg, errorStatus);
             }
 
             if (!authData || !authData.user) {
-                throw AppError.unauthorized('Usuário não localizado no provedor.');
+                throw AppError.unauthorized('Usuário não localizado no provedor de identidade.');
             }
 
             const userId = authData.user.id;
@@ -53,9 +56,9 @@ class AuthService extends BaseService {
             // 2. Busca Perfil Local (public.profiles)
             let profile = await this.repository.findById(userId);
 
-            // 3. AUTO-HEALING: Cria perfil local se não existir (falha de trigger)
+            // 3. AUTO-HEALING: Se logou no Auth mas não tem profile no DB local (falha de trigger)
             if (!profile) {
-                logger.warn(`[AuthService:Healing] Criando perfil para ${userId}`);
+                logger.warn(`[AuthService:AutoHealing] Criando perfil ausente para ${userId}`);
                 
                 const fallbackUsername = authData.user.user_metadata?.username || `otaku_${userId.substring(0, 5)}`;
                 const fallbackFullName = authData.user.user_metadata?.full_name || 'Membro Otaku';
@@ -75,7 +78,7 @@ class AuthService extends BaseService {
                 profile = await this.repository.update(userId, { role: 'ADMIN' });
             }
 
-            // 5. Geração de Tokens JWT Locais com as claims esperadas
+            // 5. Geração de Tokens JWT (Otaku Clash Token) com as claims esperadas
             const accessToken = TokenHelper.generateAccessToken({
                 id: profile.id,
                 role: profile.role,
@@ -85,7 +88,7 @@ class AuthService extends BaseService {
 
             const refreshToken = TokenHelper.generateRefreshToken(profile.id);
 
-            logger.info(`[AuthService:Success] ${profile.username} logado como ${profile.role}`);
+            logger.info(`[AuthService:Success] Login concluído: ${profile.username} [${profile.role}]`);
 
             // 6. Estrutura de retorno compatível com DTO e Frontend
             return {
@@ -105,12 +108,12 @@ class AuthService extends BaseService {
             };
 
         } catch (error) {
-            // Se já for um AppError (401/403), apenas repassa
+            // Repassa erros de negócio (AppError)
             if (error instanceof AppError) throw error;
 
-            // Erro fatal ou inesperado interno (500)
+            // Erros fatais ou inesperados internos (500)
             logger.error(`[AuthService:Fatal] Erro interno: ${error.message}`, { stack: error.stack });
-            throw AppError.internal('Falha ao processar login. Tente novamente mais tarde.');
+            throw AppError.internal('Falha ao processar autenticação. Tente novamente.');
         }
     }
 
@@ -145,7 +148,7 @@ class AuthService extends BaseService {
                 throw new Error(error.message);
             }
 
-            // 3. Envio de e-mail de boas-vindas em background (sem travar a resposta)
+            // 3. Envio de e-mail de boas-vindas em background
             emailService.sendWelcomeEmail(userData.email, userData.username).catch(err => {
                 logger.error(`[AuthService:Email] Falha no envio de boas-vindas: ${err.message}`);
             });
