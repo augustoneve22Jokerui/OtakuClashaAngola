@@ -1,37 +1,55 @@
+/**
+ * 🛠️ OTAKU CLASH ANGOLA - ERROR HANDLER CENTRAL
+ * Versão: 2.1.2 - Anti-Object-Null & Structural Error Shield
+ * Descrição: Middleware centralizado de gerenciamento, normalização e logging de exceções.
+ */
+
 const logger = require('../../config/logger');
 const AppError = require('./AppError');
 const env = require('../../config/env');
 
-/**
- * ErrorHandler - Middleware central de tratamento de erros
- */
 class ErrorHandler {
   /**
-   * Converte erros desconhecidos ou de bibliotecas em AppError
+   * Converte erros desconhecidos, nativos ou de bibliotecas em AppError estruturado.
+   * Aplica também o patch contra mensagens vazias "{}" vindas do Provedor Auth.
    */
   static handleError(err) {
     let error = err;
 
-    // Trata erros de validação do Zod
+    // 1. Trata erros de validação do Zod
     if (err.name === 'ZodError') {
       const message = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
       error = new AppError(`Erro de validação: ${message}`, 400);
+      return error;
     }
 
-    // Trata erros específicos do PostgreSQL / Supabase
+    // 2. Trata erros específicos de restrição do PostgreSQL / Supabase Database
     if (err.code === '23505') { // Unique violation
       error = new AppError('Este registro já existe em nosso sistema.', 409);
+      return error;
     }
 
     if (err.code === '23503') { // Foreign key violation
       error = new AppError('Operação inválida: Registro pai não encontrado.', 400);
+      return error;
     }
 
-    // Se não for uma instância de AppError, transforma em Internal Server Error
+    // 3. Normalização de instâncias genéricas e proteção Anti-Object-Null
     if (!(error instanceof AppError)) {
-      const statusCode = error.statusCode || 500;
-      const message = error.message || 'Erro interno do servidor';
+      const statusCode = error.statusCode || error.status || 500;
+      let message = error.message || 'Erro interno do servidor';
+
+      // 🔥 FIX DEFINITIVO: Captura objetos de erro vazios ou strings serializadas do Supabase Auth
+      if (message === '{}' || (typeof message === 'object' && Object.keys(message).length === 0)) {
+        message = 'Credenciais Inválidas ou Erro no Provedor Auth';
+      }
+
       error = new AppError(message, statusCode, false, err.stack);
+    } else {
+      // 🔥 Mesmo que já seja um AppError, aplicamos o fallback de segurança na mensagem se necessário
+      if (error.message === '{}' || (typeof error.message === 'object' && Object.keys(error.message).length === 0)) {
+        error.message = 'Credenciais Inválidas ou Erro no Provedor Auth';
+      }
     }
 
     return error;
@@ -41,27 +59,26 @@ class ErrorHandler {
    * Middleware para Express (err, req, res, next)
    */
   static middleware(err, req, res, next) {
-    let error = ErrorHandler.handleError(err);
+    // Normaliza o erro recebido utilizando as regras de negócio e infraestrutura
+    const error = ErrorHandler.handleError(err);
 
-    // Logging do erro
-    if (error.isOperational) {
-      logger.warn(`[Operational Error] ${req.method} ${req.url} - Status: ${error.statusCode} - Message: ${error.message}`);
-    } else {
-      logger.error(`[Critical Error] ${req.method} ${req.url}`, {
-        status: error.statusCode,
-        message: error.message,
-        stack: error.stack,
+    // Logging estratégico baseado no tipo e severidade do erro
+    if (error.statusCode >= 500) {
+      logger.error(`[Critical Error] ${req.method} ${req.url} - Status: ${error.statusCode} - Message: ${error.message}`, { 
+        stack: error.stack 
       });
+    } else {
+      logger.warn(`[Operational Error] ${req.method} ${req.url} - Status: ${error.statusCode} - Message: ${error.message}`);
     }
 
-    // Resposta para o cliente
+    // Estruturação da resposta padrão HTTP JSON
     const response = {
       status: 'error',
       message: error.message,
       ...(env.NODE_ENV === 'development' && { stack: error.stack })
     };
 
-    // Adiciona detalhes de validação se existirem (específico para ZodError mapeado)
+    // Injeta detalhes granulares adicionais se a origem do erro for um ZodError
     if (err.name === 'ZodError') {
       response.errors = err.errors.map(e => ({
         field: e.path.join('.'),
@@ -73,7 +90,7 @@ class ErrorHandler {
   }
 
   /**
-   * Captura erros em rotas assíncronas (Wrapper para evitar try/catch repetitivo)
+   * Captura erros em rotas assíncronas (Wrapper elegante para eliminar blocos try/catch repetitivos)
    */
   static catchAsync(fn) {
     return (req, res, next) => {
