@@ -1,6 +1,6 @@
 /**
- * 🛡️ OTAKU CLASH ANGOLA - AUTHENTICATION MIDDLEWARE
- * Versão: 2.0.0 - Enterprise Resilient
+ * 🕵️ OTAKU CLASH ANGOLA - AUTHENTICATION MIDDLEWARE
+ * Versão: 2.1.0 - Robust UUID Check & Enterprise Resilient
  * Descrição: Interceptador de segurança para validação de tokens JWT em rotas protegidas.
  */
 
@@ -41,14 +41,19 @@ const authMiddleware = (req, res, next) => {
      */
     const decoded = TokenHelper.verifyAccessToken(token);
 
+    // Validação robusta de UUID/Identificador ausente no payload decodificado
+    if (!decoded || (!decoded.sub && !decoded.id)) {
+      return next(AppError.unauthorized('Token inválido: Identificador ausente.'));
+    }
+
     /**
      * 4. Injeção dos dados do usuário na Requisição
-     * Mapeamos os campos do JWT para um objeto padrão req.user.
-     * req.user.role é fundamental para o roleMiddleware funcionar.
+     * Padronização absoluta: ID sempre em req.user.id vindo do 'sub' ou 'id' do JWT.
+     * req.user.role é fundamental em caixa alta para o funcionamento correto do roleMiddleware.
      */
     req.user = {
       id: decoded.sub || decoded.id,
-      role: decoded.role || 'USER',
+      role: (decoded.role || 'USER').toUpperCase(),
       email: decoded.email,
       username: decoded.username
     };
@@ -65,9 +70,14 @@ const authMiddleware = (req, res, next) => {
       return next(error);
     }
 
+    // Captura específica para expiração de token JWT padrão
+    if (error.name === 'TokenExpiredError') {
+      return next(AppError.unauthorized('Sua sessão expirou.'));
+    }
+
     // Erros inesperados no processamento do middleware
     logger.error(`[AuthMiddleware:Fatal] ${error.message}`);
-    return next(AppError.internal('Erro ao processar validação de identidade.'));
+    return next(AppError.unauthorized('Credencial de acesso inválida.'));
   }
 };
 
