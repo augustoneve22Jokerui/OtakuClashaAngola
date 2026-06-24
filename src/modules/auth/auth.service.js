@@ -1,6 +1,6 @@
 /**
  * 🔐 OTAKU CLASH ANGOLA - AUTH SERVICE (ULTRA RESILIENT)
- * Versão: 2.1.1 - Debugging & Precision Login
+ * Versão: 2.1.2 - Anti-Object-Null Fix & Debugging Precision
  * Descrição: Orquestrador de identidade, sessões e auto-healing de perfis locais.
  */
 
@@ -18,7 +18,7 @@ class AuthService extends BaseService {
 
     /**
      * 🔥 LOGIN COM AUTO-HEALING DE PERFIL
-     * Autentica no Supabase com captura altamente precisa de logs e erros de resposta.
+     * Autentica no Supabase com captura resiliente de erros e normalização de objetos nulos/complexos.
      */
     async login(email, password) {
         try {
@@ -28,27 +28,29 @@ class AuthService extends BaseService {
             let authData;
             try {
                 authData = await this.repository.signInWithEmail(email, password);
-            } catch (supabaseErr) {
-                // 🔥 EXTRAÇÃO PRECISA DO ERRO
-                const errorMsg = supabaseErr.message || 'Erro desconhecido no provedor';
-                const errorStatus = supabaseErr.status || 401;
+            } catch (err) {
+                // 🔥 FIX DEFINITIVO: Extração forçada de string para evitar falhas de [object Object]
+                const rawMessage = err.message || (typeof err === 'string' ? err : JSON.stringify(err)) || 'Erro desconhecido no provedor';
+                const statusCode = err.status || 401;
+
+                logger.warn(`[AuthService:Denied] Usuário: ${email} | Mensagem: ${rawMessage}`);
                 
-                logger.warn(`[AuthService:Denied] Usuário: ${email} | Mensagem: ${errorMsg}`);
-                
-                // Se o erro for de e-mail não confirmado, retornamos mensagem customizada amigável
-                if (errorMsg.toLowerCase().includes('confirm')) {
+                // Mapeamento preciso de strings de erro comuns do ecossistema Supabase Auth
+                if (rawMessage.includes('Invalid login credentials') || rawMessage.includes('invalid_credentials')) {
+                    throw AppError.unauthorized('E-mail ou senha incorrectos.');
+                }
+                if (rawMessage.toLowerCase().includes('confirm')) {
                     throw AppError.unauthorized('Por favor, confirme o seu e-mail antes de aceder.');
                 }
-
-                if (errorStatus === 400 || errorMsg.includes('invalid_credentials')) {
+                if (statusCode === 400) {
                     throw AppError.unauthorized('Credenciais inválidas. Verifique seu e-mail e senha.');
                 }
 
-                throw new AppError(errorMsg, errorStatus);
+                throw new AppError(rawMessage, statusCode);
             }
 
             if (!authData || !authData.user) {
-                throw AppError.unauthorized('Usuário não localizado no provedor de identidade.');
+                throw AppError.unauthorized('Credenciais validadas, mas usuário não retornado pelo provedor.');
             }
 
             const userId = authData.user.id;
@@ -58,7 +60,7 @@ class AuthService extends BaseService {
 
             // 3. AUTO-HEALING: Se logou no Auth mas não tem profile no DB local (falha de trigger)
             if (!profile) {
-                logger.warn(`[AuthService:AutoHealing] Criando perfil ausente para ${userId}`);
+                logger.warn(`[AuthService:AutoHealing] Criando perfil ausente para UID: ${userId}`);
                 
                 const fallbackUsername = authData.user.user_metadata?.username || `otaku_${userId.substring(0, 5)}`;
                 const fallbackFullName = authData.user.user_metadata?.full_name || 'Membro Otaku';
@@ -108,12 +110,12 @@ class AuthService extends BaseService {
             };
 
         } catch (error) {
-            // Repassa erros de negócio (AppError)
+            // Repassa erros de negócio (AppError) com status corretos
             if (error instanceof AppError) throw error;
 
             // Erros fatais ou inesperados internos (500)
-            logger.error(`[AuthService:Fatal] Erro interno: ${error.message}`, { stack: error.stack });
-            throw AppError.internal('Falha ao processar autenticação. Tente novamente.');
+            logger.error(`[AuthService:Fatal] Erro interno crítico: ${error.message}`, { stack: error.stack });
+            throw AppError.internal('Falha crítica no processo de login.');
         }
     }
 
@@ -200,4 +202,5 @@ class AuthService extends BaseService {
     }
 }
 
+// Exporta instância Singleton limpa
 module.exports = new AuthService();
