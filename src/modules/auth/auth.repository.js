@@ -1,6 +1,6 @@
 /**
  * 🗄️ OTAKU CLASH ANGOLA - AUTH REPOSITORY (ULTRA RESILIENT)
- * Versão: 2.1.0 - Enterprise Grade
+ * Versão: 2.1.1 - Enterprise Grade & Query Precision
  * Descrição: Camada de persistência para identidade, perfis e carteiras de usuários.
  */
 
@@ -19,6 +19,7 @@ class AuthRepository extends BaseRepository {
      */
     async signInWithEmail(email, password) {
         try {
+            // Usamos o supabaseAdmin para garantir bypass de RLS se necessário
             const { data, error } = await supabaseAdmin.auth.signInWithPassword({ 
                 email, 
                 password 
@@ -42,7 +43,7 @@ class AuthRepository extends BaseRepository {
      */
     async findById(id) {
         const query = `
-            SELECT p.*, au.email, au.last_sign_in_at 
+            SELECT p.*, au.email 
             FROM public.profiles p 
             JOIN auth.users au ON p.id = au.id 
             WHERE p.id = $1 
@@ -66,22 +67,10 @@ class AuthRepository extends BaseRepository {
         const { id, username, full_name, role } = profileData;
         
         const query = `
-            INSERT INTO public.profiles (
-                id, 
-                username, 
-                full_name, 
-                role, 
-                xp, 
-                level, 
-                created_at, 
-                updated_at
-            )
-            VALUES ($1, $2, $3, $4, 0, 1, NOW(), NOW())
-            ON CONFLICT (id) DO UPDATE SET
-                username = EXCLUDED.username,
-                full_name = EXCLUDED.full_name,
-                updated_at = NOW()
-            RETURNING *;
+            INSERT INTO public.profiles (id, username, full_name, role)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
+            RETURNING *
         `;
 
         try {
