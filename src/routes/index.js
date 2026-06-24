@@ -1,6 +1,6 @@
 /**
  * 🚀 OTAKU CLASH ANGOLA - API ROUTER
- * Versão: 2.1.3 - Final Routing & Enterprise Path Matching Edition
+ * Versão: 2.1.4 - Clean Route Mounting & Enterprise Path Matching Edition
  * Descrição: Orquestrador central de rotas da API. Responsável por Health Checks híbridos,
  *            versionamento sem colisões, mapeamento de metadados e Fallback Global.
  */
@@ -132,7 +132,7 @@ apiV1.get('/', (req, res) => {
   return res.status(200).json({
     success: true,
     api: 'Otaku Clash Angola',
-    version: '2.1.3',
+    version: '2.1.4',
     status: 'ONLINE',
     endpoints: {
       auth: '/api/v1/auth',
@@ -169,7 +169,7 @@ router.get('/', (req, res) => {
   return res.status(200).json({
     success: true,
     name: 'Otaku Clash Angola API',
-    version: '2.1.3',
+    version: '2.1.4',
     status: 'ONLINE',
     message: 'Bem-vindo ao núcleo competitivo de elite.',
     timestamp: new Date().toISOString()
